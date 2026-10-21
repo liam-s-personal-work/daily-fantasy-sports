@@ -129,11 +129,14 @@ def grade_lineup(contest: Contest, lineup: Lineup, actual: dict[str, float], *,
 
 # ----------------------------------------------------------------------------- learning the blend
 
-def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight: float, n0: float = 400.0) -> dict:
-    """Shrunk inverse-MSE weight on the forecast vs the baseline, per position.
+def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight: float, n0: float = 200.0) -> dict:
+    """Learn the forecast's blend weight per position from graded player-games.
 
-    ``errors`` rows: {"position", "baseline_err", "forecast_err"} (actual - projected). Weights move
-    toward the data only as evidence accumulates: w = (n0 * w_prior + n * w_data) / (n0 + n).
+    ``errors`` rows: {"position", "baseline_err", "forecast_err"} (actual - projected). With
+    x = forecast - baseline and y = actual - baseline, the MSE-optimal weight is the slope of
+    y on x (the encompassing regression). It is shrunk toward the prior with n0 pseudo-games:
+    w = clip((sum xy + lam * w0) / (sum xx + lam), 0, 1), lam = n0 * mean(xx).
+    Sufficient statistics accumulate across slates, so every graded slate refines the weight.
     """
     path = Path(path)
     state = json.loads(path.read_text()) if path.exists() else {}
@@ -142,13 +145,20 @@ def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight:
     for e in errors:
         by_pos.setdefault(e["position"], []).append(e)
     for pos, rows in by_pos.items():
-        rec = sp.setdefault(pos, {"n": 0, "sse_baseline": 0.0, "sse_forecast": 0.0, "weight": prior_weight})
+        rec = sp.setdefault(pos, {"n": 0, "sxy": 0.0, "sxx": 0.0, "sse_baseline": 0.0, "sse_forecast": 0.0,
+                                  "prior": prior_weight, "weight": prior_weight})
+        for r in rows:
+            x = r["baseline_err"] - r["forecast_err"]  # forecast - baseline
+            y = r["baseline_err"]  # actual - baseline
+            rec["sxy"] += x * y
+            rec["sxx"] += x * x
+            rec["sse_baseline"] += r["baseline_err"] ** 2
+            rec["sse_forecast"] += r["forecast_err"] ** 2
         rec["n"] += len(rows)
-        rec["sse_baseline"] += sum(r["baseline_err"] ** 2 for r in rows)
-        rec["sse_forecast"] += sum(r["forecast_err"] ** 2 for r in rows)
-        mse_b, mse_f = rec["sse_baseline"] / rec["n"], rec["sse_forecast"] / rec["n"]
-        w_data = (1 / mse_f) / (1 / mse_f + 1 / mse_b) if mse_f > 0 and mse_b > 0 else prior_weight
-        rec["weight"] = round((n0 * prior_weight + rec["n"] * w_data) / (n0 + rec["n"]), 4)
+        lam = n0 * rec["sxx"] / max(rec["n"], 1)
+        w = (rec["sxy"] + lam * rec.get("prior", prior_weight)) / max(rec["sxx"] + lam, 1e-9)
+        rec["weight"] = round(min(max(w, 0.0), 1.0), 4)
+        rec["mae_note"] = "weights are learned on graded 2026 games only (after the model's training cutoff)"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=1))
     return state

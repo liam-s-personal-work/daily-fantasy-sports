@@ -1,0 +1,35 @@
+{
+ "nfl": {
+  "DST": {
+   "low_scale": 0.714,
+   "high_scale": 1.154,
+   "n": 91
+  },
+  "QB": {
+   "low_scale": 0.8,
+   "high_scale": 1.374,
+   "n": 135
+  },
+  "RB": {
+   "low_scale": 1.0,
+   "high_scale": 1.261,
+   "n": 315
+  },
+  "TE": {
+   "low_scale": 1.0,
+   "high_scale": 1.417,
+   "n": 240
+  },
+  "WR": {
+   "low_scale": 1.0,
+   "high_scale": 1.368,
+   "n": 544
+  },
+  "default": {
+   "low_scale": 1.0,
+   "high_scale": 1.343,
+   "n": 1325
+  }
+ },
+ "_source": "fit on 2026 NFL weeks 3-6 graded forecasts (docs/results/forecast_experiment_2026_wk3-6_blind.md); refit as more weeks are graded"
+}

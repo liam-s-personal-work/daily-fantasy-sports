@@ -57,7 +57,8 @@ class RunConfig:
     target_top: float = 0.023  # finish inside the top 2.3% (tournaments)
     field_size: int | None = None
     user_rules: UserRules | None = None
-    learned_blend: Path | None = Path("data/learned/blend.json")
+    learned_blend: Path | None = blend_mod.LEARNED_DIR / "blend.json"
+    calibration: Path | None = blend_mod.LEARNED_DIR / "calibration.json"
     concurrency: int = 6
     seed: int = 11
     season: int | None = None
@@ -218,8 +219,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     _save(run_dir, "forecasts.json", forecasts)
     learned = blend_mod.load_learned(cfg.learned_blend)
     baseline = {k: v for k, v in ctx.baseline.items() if k not in out_keys}
+    calib = blend_mod.load_calibration(cfg.calibration) if cfg.calibration else {}
     projections = blend_mod.blend(baseline, {k: v for k, v in forecasts.items() if k not in out_keys},
-                                  contest.players, sport, learned=learned, weight_override=cfg.forecast_weight_override)
+                                  contest.players, sport, learned=learned, calib=calib,
+                                  weight_override=cfg.forecast_weight_override)
     _save(run_dir, "projections.json", projections)
     clock.mark(f"forecast+blend: {len(forecasts)} forecasts, {len(projections)} projections")
 

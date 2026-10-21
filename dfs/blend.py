@@ -1,12 +1,13 @@
 """Blend the statistical baseline with the blinded forecast, per player.
 
 Quantile averaging (Vincentization): each of p10/p50/p90 is the weighted average of the two
-sources' same quantile; p_zero is averaged too. The forecaster's intervals are widened first
-by learned per-position offsets (conformal calibration), because LLM intervals run narrow.
+sources' same quantile; p_zero is averaged too. The forecaster's range is first stretched by
+learned per-position tail scales (``data/learned/calibration.json``), because its upper tail
+ran short on graded games.
 
 Weights: the user's starting priors (NFL 0.85 forecast, college 1.0, other sports 0.0 =
-baseline only), replaced per position by learned weights once a weights file has enough
-graded player-games behind it (see dfs.grade.update_blend).
+baseline only), replaced per position by learned weights (``data/learned/blend.json``,
+encompassing regression shrunk toward the prior; see dfs.grade.update_blend).
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from dfs.distributions import mixture_mean
 from dfs.models import Forecast, Player, Projection
 
 PRIOR_FORECAST_WEIGHT = {"nfl": 0.85, "cfb": 1.0}
-MIN_LEARNED_N = 150
+MIN_LEARNED_N = 30  # the learned weight is already shrunk toward the prior; this only guards tiny samples
+LEARNED_DIR = Path(__file__).resolve().parents[1] / "data" / "learned"
 
 
 def forecast_weight(sport: str, position: str, learned: dict | None = None) -> float:
@@ -34,12 +36,22 @@ def load_learned(path: str | Path | None) -> dict:
     return {}
 
 
-def calibrate(f: Forecast, widen: dict[str, float] | None, position: str) -> Forecast:
-    """Conformal widening: move low down and high up by the learned per-position offset (points)."""
-    q = (widen or {}).get(position, 0.0)
-    if not q:
+def load_calibration(path: str | Path | None = None) -> dict:
+    p = Path(path) if path else LEARNED_DIR / "calibration.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def calibrate(f: Forecast, calib: dict | None, sport: str, position: str) -> Forecast:
+    """Stretch each half of the forecaster's range by the learned per-position scale, so that
+    about 10% of outcomes fall below low and 10% above high (graded 2026 games: its upper
+    tail ran short)."""
+    table = (calib or {}).get(sport) or {}
+    c = table.get(position) or table.get("default")
+    if not c:
         return f
-    return f.model_copy(update={"low": f.low - q, "high": f.high + q})
+    lo = f.likely - c["low_scale"] * max(f.likely - f.low, 0.25)
+    hi = f.likely + c["high_scale"] * max(f.high - f.likely, 0.25)
+    return f.model_copy(update={"low": lo, "high": hi})
 
 
 def forecast_to_projection(f: Forecast, floor: float | None = None) -> Projection:
@@ -50,7 +62,7 @@ def forecast_to_projection(f: Forecast, floor: float | None = None) -> Projectio
 
 
 def blend(baseline: dict[str, Projection], forecast: dict[str, Forecast], players: dict[str, Player],
-          sport: str, learned: dict | None = None, widen: dict[str, float] | None = None,
+          sport: str, learned: dict | None = None, calib: dict | None = None,
           weight_override: float | None = None) -> dict[str, Projection]:
     out: dict[str, Projection] = {}
     for k in set(baseline) | set(forecast):
@@ -58,7 +70,7 @@ def blend(baseline: dict[str, Projection], forecast: dict[str, Forecast], player
         f = forecast.get(k)
         pos = players[k].positions[0] if k in players and players[k].positions else "?"
         if f is not None:
-            f = calibrate(f, widen, pos)
+            f = calibrate(f, calib, sport, pos)
         if f is None or b is None:
             src = b if b is not None else forecast_to_projection(f)
             out[k] = src.model_copy(update={"source": src.source if f is None else "forecast",

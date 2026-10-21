@@ -1,0 +1,54 @@
+{
+ "nfl": {
+  "DST": {
+   "n": 91,
+   "sxy": 22.364804283670967,
+   "sxx": 222.29612543198832,
+   "sse_baseline": 2086.104238875,
+   "sse_forecast": 2263.670755739646,
+   "prior": 0.85,
+   "weight": 0.6157,
+   "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
+  },
+  "QB": {
+   "n": 244,
+   "sxy": 1159.3615862017061,
+   "sxx": 1397.061124772505,
+   "sse_baseline": 9477.54359850473,
+   "sse_forecast": 8555.881550873815,
+   "prior": 0.85,
+   "weight": 0.8389,
+   "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
+  },
+  "RB": {
+   "n": 366,
+   "sxy": 710.6777470786384,
+   "sxx": 1412.6469260388321,
+   "sse_baseline": 12989.020362739631,
+   "sse_forecast": 12980.311794621184,
+   "prior": 0.85,
+   "weight": 0.6257,
+   "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
+  },
+  "TE": {
+   "n": 244,
+   "sxy": -89.61714508722112,
+   "sxx": 359.8801965486591,
+   "sse_baseline": 8544.56038301207,
+   "sse_forecast": 9083.674869735172,
+   "prior": 0.85,
+   "weight": 0.246,
+   "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
+  },
+  "WR": {
+   "n": 610,
+   "sxy": 939.421082285319,
+   "sxx": 1280.3834042771882,
+   "sse_baseline": 24870.35213296105,
+   "sse_forecast": 24271.893372667575,
+   "prior": 0.85,
+   "weight": 0.7624,
+   "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
+  }
+ }
+}
