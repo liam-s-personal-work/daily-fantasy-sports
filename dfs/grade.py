@@ -81,12 +81,15 @@ class Grade:
 def grade_lineup(contest: Contest, lineup: Lineup, actual: dict[str, float], *,
                  projections: dict[str, Projection] | None = None,
                  stage_lineups: dict[str, Lineup] | None = None,
+                 alternatives: dict[str, Lineup] | None = None,
                  standings: Standings | None = None, target_top: float = 0.023) -> Grade:
     """Score the lineup, compare it with the best possible lineup and with each stage's lineup.
 
-    ``stage_lineups`` maps stage names in pipeline order (e.g. "baseline_only", "forecast_only",
-    "blend", "after_strategist", "after_checker", "final") to the lineup that stage would have
-    submitted; consecutive differences in actual points say which step helped or hurt.
+    ``stage_lineups`` is the chain of lineups the pipeline would have submitted after each step,
+    in order (e.g. baseline numbers -> blended numbers -> contest objective + strategist ->
+    checker -> final -> last call); consecutive differences in actual points say which step
+    helped or hurt, and the most costly one is ``failed_step``. ``alternatives`` (the drafts,
+    a forecast-only lineup) are scored for comparison but are not steps.
     """
     pts = {k: actual.get(k, 0.0) for k in contest.players}
     got = lineup_points(lineup, pts)
@@ -113,12 +116,11 @@ def grade_lineup(contest: Contest, lineup: Lineup, actual: dict[str, float], *,
         vals = {n: lineup_points(stage_lineups[n], pts) for n in names}
         for a, b in zip(names, names[1:]):
             g.steps[f"{a}->{b}"] = round(vals[b] - vals[a], 2)
-        if "baseline_only" in vals and "forecast_only" in vals:
-            g.notes.append(f"baseline-only lineup would have scored {vals['baseline_only']:.1f}, "
-                           f"forecast-only {vals['forecast_only']:.1f}")
         worst = min(g.steps.items(), key=lambda kv: kv[1], default=None)
         if worst and worst[1] < 0:
             g.failed_step = worst[0].split("->")[1]
+    for name, alt in (alternatives or {}).items():
+        g.notes.append(f"alternative {name} would have scored {lineup_points(alt, pts):.1f}")
     if g.failed_step is None and g.per_slot:
         miss = min(g.per_slot, key=lambda r: r["actual"] - (r["projected"] or 0))
         g.failed_step = "projection" if (miss["projected"] or 0) - miss["actual"] > 8 else None

@@ -95,28 +95,36 @@ def grade_run(run_dir: Path, standings: str | None = None, update: bool = True,
     proj = st["projections"]
     baseline = st["baseline"]
     out = set(base.get("ruled_out") or [])
-    stages: dict[str, Lineup] = {}
-    b_only = _lineup_on(c, baseline, out, "baseline_only")
+    # The chain of what would have been submitted after each step (same objective-free mean solve
+    # for the two number sources, so the numbers step compares like with like).
+    chain: dict[str, Lineup] = {}
+    alts: dict[str, Lineup] = {}
+    b_only = _lineup_on(c, baseline, out, "baseline numbers")
     if b_only:
-        stages["baseline_only"] = b_only
+        chain["baseline_numbers"] = b_only
+    blended = _lineup_on(c, proj, out, "blended numbers")
+    if blended:
+        chain["blended_numbers"] = blended
+    stl = report.get("stage_lineups") or {}
+    for name in ("after_strategist", "after_checker", "final"):
+        if name in stl:
+            chain["objective+strategist" if name == "after_strategist" else name] = Lineup.model_validate(stl[name])
     if st["forecasts"]:
         from dfs.blend import forecast_to_projection
         fproj = {**baseline, **{k: forecast_to_projection(f) for k, f in st["forecasts"].items()}}
         f_only = _lineup_on(c, fproj, out, "forecast_only")
         if f_only:
-            stages["forecast_only"] = f_only
+            alts["forecast_numbers"] = f_only
     for d in report["decision"].get("drafts", []):
         lu = Lineup.model_validate(d)
-        stages[lu.label.split(" - ")[0].lower().replace(" ", "_")] = lu
-    for name, lu in (report.get("stage_lineups") or {}).items():
-        if name != "blend":
-            stages[name] = Lineup.model_validate(lu)
+        alts[lu.label.split(" - ")[0].lower().replace(" ", "_")] = lu
     final = st["final"]
     if (run_dir / "lastcall.json").exists():
         final = Lineup.model_validate(json.loads((run_dir / "lastcall.json").read_text())["final"])
-        stages["after_lastcall"] = final
+        chain["after_lastcall"] = final
+    stages = {**chain, **alts}
 
-    g = grade_lineup(c, final, actual, projections=proj, stage_lineups=stages, standings=stnd,
+    g = grade_lineup(c, final, actual, projections=proj, stage_lineups=chain, alternatives=alts, standings=stnd,
                      target_top=float(cfg.get("target_top", 0.023)))
     res = g.to_dict()
     res["stage_scores"] = {n: round(lineup_points(lu, actual), 2) for n, lu in stages.items()}
