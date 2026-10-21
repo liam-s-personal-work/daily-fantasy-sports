@@ -109,8 +109,8 @@ class _Index:
                 self.dst[r["team"]] = i
                 continue
             self.by_team[r["team"]].append(i)
-            for nm in [r["name"], *r["alt_names"]]:
-                self.by_key[compact(nm)].append(i)
+            for k in {compact(nm) for nm in [r["name"], *r["alt_names"]]}:
+                self.by_key[k].append(i)
 
     def pos_ok(self, i: int, positions: set[str]) -> bool:
         return not positions or self.rows.at[i, "position"] in positions
@@ -205,6 +205,8 @@ def _match_one(p: Player, team: str, positions: set[str], idx: _Index, cutoff: f
         ini = [i for i in lastn if normalize_name(rows.at[i, "name"])[:1] == first[:1]]
         if len(ini) == 1:
             return mk(ini[0], "initial")
+        if len(ini) > 1:
+            return f"ambiguous on {team}: {[str(rows.at[i, 'name']) for i in ini]}"
         if len(lastn) == 1:
             return mk(lastn[0], "last_name")
     other = [i for i in hits if idx.pos_ok(i, positions)] or hits

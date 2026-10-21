@@ -11,9 +11,9 @@ ruled out before his game is force-excluded and only the open slots are re-solve
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone, tzinfo
-from typing import Iterable, Mapping
 
 from dfs.field import point_values
 from dfs.models import Contest, Lineup, LineupSlot, Player, Projection, UserRules
@@ -78,8 +78,9 @@ def late_swap(contest: Contest, lineup: Lineup, points: Mapping[str, float | Pro
     """Re-solve the open slots of ``lineup`` at time ``now`` with current ``points``.
 
     ``ruled_out`` (keys or names) are excluded; a ruled-out player in a locked slot stays
-    (his game has started) and is reported in ``notes``. If no legal re-solve exists the
-    original lineup is returned with ``feasible=False``.
+    (his game has started) and is reported in ``notes``. In a contest without late swap
+    (``rules.late_swap`` False) the whole lineup locks at the slate's first kickoff. If no
+    legal re-solve exists the original lineup is returned with ``feasible=False``.
     """
     pts = point_values(points)
     out_keys = _keys_for(contest, ruled_out)
@@ -90,8 +91,10 @@ def late_swap(contest: Contest, lineup: Lineup, points: Mapping[str, float | Pro
     no_time = sorted(k for k in lineup.player_keys if contest.players[k].start_time is None)
     if no_time:
         notes.append(f"no start time (treated as {'started' if unknown_started else 'not started'}): {no_time}")
+    if not contest.rules.late_swap and started:
+        notes.append("contest has no late swap: every slot locked at the slate's first kickoff")
+        started |= set(lineup.player_keys)
     locked_idx = [i for i, s in enumerate(lineup.slots) if s.player_key in started]
-    locked_rows = {lineup.slots[i].site_id: lineup.slots[i] for i in locked_idx}
     locked_keys = {lineup.slots[i].player_key for i in locked_idx}
     for k in sorted(out_keys & locked_keys):
         notes.append(f"{contest.players[k].name} is ruled out but his game has started: slot locked")
@@ -105,35 +108,27 @@ def late_swap(contest: Contest, lineup: Lineup, points: Mapping[str, float | Pro
         notes.append("every slot is locked")
         return result(lineup, [])
 
-    cands = []
-    for c in contest.candidates:
-        if c.site_id in locked_rows:  # pin a locked row to the exact slot name it occupies
-            cands.append(c.model_copy(update={"eligible_slots": [locked_rows[c.site_id].slot]}))
-        elif c.player_key not in started and c.player_key not in locked_keys:
-            cands.append(c)
-    sub = contest.model_copy(update={"candidates": cands})
-    for k in locked_keys:
-        pts.setdefault(k, 0.0)
     base = opts or SolveOptions()
     stale = set(base.lock_keys) & (started - locked_keys)
     if stale:
         notes.append(f"locks on players already started outside the lineup ignored: {sorted(stale)}")
-    o = replace(base, lock_keys=(set(base.lock_keys) - stale - out_keys) | locked_keys,
+    o = replace(base, slot_locks={**base.slot_locks, **{i: lineup.slots[i].site_id for i in locked_idx}},
+                lock_keys=(set(base.lock_keys) - stale - out_keys) | locked_keys,
                 exclude_keys=(set(base.exclude_keys) | out_keys | started) - locked_keys,
                 user_rules=_sanitize(base.user_rules, contest, locked_keys, started, notes))
     try:
-        solved = solve(sub, pts, o, label="lateswap")
+        solved = solve(contest, pts, o, label="lateswap")
     except Infeasible as e:
         try:
             if not (o.qb_stack or o.bring_back):
                 raise
-            solved = solve(sub, pts, replace(o, qb_stack=0, bring_back=0), label="lateswap")
+            solved = solve(contest, pts, replace(o, qb_stack=0, bring_back=0), label="lateswap")
             notes.append(f"stack rule dropped: {e}")
         except Infeasible as e2:
             notes.append(f"no legal re-solve ({e2}); original lineup kept")
             return result(lineup, [], feasible=False)
 
-    new_slots = _reassign(lineup, solved, locked_idx)
+    new_slots = _reassign(lineup, solved, o.slot_locks)
     lu = Lineup(slots=new_slots, label=lineup.label or "lateswap", salary=sum(s.salary for s in new_slots),
                 mean=round(sum(pts.get(s.player_key, 0.0) * s.points_multiplier for s in new_slots), 3),
                 metrics={**lineup.metrics})
@@ -149,16 +144,15 @@ def late_swap(contest: Contest, lineup: Lineup, points: Mapping[str, float | Pro
     return result(lu, changes)
 
 
-def _reassign(original: Lineup, solved: Lineup, locked_idx: list[int]) -> list[LineupSlot]:
-    """Put locked rows back in their own cells; fill open cells of each slot name with the
-    solver's picks for that name, leaving a kept player in his old cell."""
-    locked = set(locked_idx)
-    locked_ids = {original.slots[i].site_id for i in locked}
+def _reassign(original: Lineup, solved: Lineup, fixed_idx: Iterable[int]) -> list[LineupSlot]:
+    """Slot-locked cells keep the solver's exact placement; the other cells of each slot name
+    take the solver's picks for that name, a kept player staying in his old cell."""
+    fixed = set(fixed_idx)
     pool: dict[str, list[LineupSlot]] = defaultdict(list)
-    for s in solved.slots:
-        if s.site_id not in locked_ids:
+    for i, s in enumerate(solved.slots):
+        if i not in fixed:
             pool[s.slot].append(s)
-    out: list[LineupSlot | None] = [original.slots[i] if i in locked else None for i in range(len(original.slots))]
+    out: list[LineupSlot | None] = [solved.slots[i] if i in fixed else None for i in range(len(original.slots))]
     for i, s in enumerate(original.slots):  # unchanged picks stay put
         if out[i] is None:
             same = next((p for p in pool[s.slot] if p.site_id == s.site_id), None)

@@ -2,6 +2,7 @@
 
     dfs parse  DKSalaries.csv                  # what the engine sees in a file (no model calls)
     dfs run    DKEntries.csv [--no-web] ...    # the main run -> runs/<id>/upload.csv + report.md
+    dfs windows  runs/<id>                     # when to run the last call for each kickoff window
     dfs lastcall runs/<id>                     # last-hour news/inactives check -> upload_final.csv
     dfs grade  runs/<id> [--standings contest-standings.csv]
     dfs backtest --season 2026 --weeks 3-6     # baseline accuracy on real games
@@ -68,6 +69,13 @@ def _lastcall(args) -> int:
     return 0
 
 
+def _windows(args) -> int:
+    from dfs.lastcall import kickoff_windows
+    for w in kickoff_windows(Path(args.run_dir), args.lead):
+        print(f"kickoff {w['kickoff']}: run `dfs lastcall {args.run_dir}` at {w['run_lastcall_at']} for {', '.join(w['picks'])}")
+    return 0
+
+
 def _grade(args) -> int:
     from dfs.grading_run import grade_run
     out = grade_run(Path(args.run_dir), standings=args.standings, update=not args.no_update)
@@ -105,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("lastcall"); s.add_argument("run_dir"); s.add_argument("--threshold", type=float, default=0.01)
     s.add_argument("--no-web", action="store_true"); s.set_defaults(fn=_lastcall)
+
+    s = sub.add_parser("windows"); s.add_argument("run_dir"); s.add_argument("--lead", type=int, default=60)
+    s.set_defaults(fn=_windows)
 
     s = sub.add_parser("grade"); s.add_argument("run_dir"); s.add_argument("--standings")
     s.add_argument("--no-update", action="store_true"); s.set_defaults(fn=_grade)

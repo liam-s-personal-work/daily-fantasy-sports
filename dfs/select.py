@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import time
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Mapping, Sequence
 
 import numpy as np
 
-from dfs.field import (FieldModel, Pruner, build_field, has_qb_stack, lineup_key, lineup_matrix, point_values,
-                       solve_pruned)
+from dfs.field import (FieldModel, Pruner, build_field, fit_ownership, has_qb_stack, lineup_key, lineup_matrix,
+                       point_values, solve_pruned)
 from dfs.models import Contest, ContestKind, Lineup, Projection
 from dfs.optimize.ilp import Infeasible, SolveOptions, solve
 from dfs.sim import simulate
@@ -64,26 +64,36 @@ def _base_opts(base: SolveOptions | None) -> SolveOptions:
     return replace(base or SolveOptions(), workers=1, time_limit_s=min((base or SolveOptions()).time_limit_s, 5.0))
 
 
-def _can_prune(opts: SolveOptions) -> bool:
-    """Dominance pruning is unsafe when user rules can force or forbid dominating players."""
+def _can_prune(opts: SolveOptions, team_safe: bool = False) -> bool:
+    """Dominance pruning is unsafe when rules can force or forbid dominating players, and
+    for stack rules unless the caller keeps every player of the stacked teams."""
     ur = opts.user_rules
-    return not (ur and (ur.lock or ur.exclude or ur.exclude_teams or ur.exclude_games or ur.stack
-                        or ur.max_from_team or ur.min_salary)) and not opts.min_salary
+    if ur and (ur.lock or ur.exclude or ur.exclude_teams or ur.exclude_games or ur.stack
+               or ur.max_from_team or ur.min_salary):
+        return False
+    return not opts.min_salary and (team_safe or not (opts.qb_stack or opts.bring_back))
 
 
-def _vector(values: Mapping[str, float], keys: Sequence[str], opts: SolveOptions) -> np.ndarray:
-    v = np.array([float(values.get(k, 0.0)) for k in keys])
-    for j, k in enumerate(keys):
-        if k in opts.exclude_keys:
-            v[j] = -1e6  # never dominates anyone; the solver drops it anyway
+def _unconstrained(opts: SolveOptions) -> bool:
+    """No user/option rules, so any legal lineup (e.g. a field lineup) is admissible."""
+    return _can_prune(opts) and not (opts.lock_keys or opts.exclude_keys or opts.slot_locks or opts.qb_stack
+                                     or opts.bring_back)
+
+
+def _masked(values: np.ndarray, keys: Sequence[str], opts: SolveOptions) -> np.ndarray:
+    """Excluded players get -1e6 so they never dominate anyone (the solver drops them anyway)."""
+    v = np.asarray(values, dtype=float).copy()
+    if opts.exclude_keys:
+        v[[j for j, k in enumerate(keys) if k in opts.exclude_keys]] = -1e6
     return v
 
 
 def _solve(contest: Contest, pruner: Pruner, values: np.ndarray, opts: SolveOptions, keep: set[str],
-           label: str) -> Lineup | None:
+           label: str, team_safe: bool = False) -> Lineup | None:
     try:
-        if _can_prune(opts):
-            return solve_pruned(contest, pruner, values, opts, keep=keep | set(opts.lock_keys), label=label)
+        if _can_prune(opts, team_safe):
+            pinned = {c.player_key for c in contest.candidates if c.site_id in set(opts.slot_locks.values())}
+            return solve_pruned(contest, pruner, values, opts, keep=keep | set(opts.lock_keys) | pinned, label=label)
         pts = {k: float(v) for k, v in zip(pruner.keys, values) if k not in opts.exclude_keys}
         return solve(contest, pts, opts, label=label)
     except Infeasible:
@@ -115,8 +125,8 @@ def sim_optimal(contest: Contest, keys: Sequence[str], draws: np.ndarray, means:
     for i, d in enumerate(draws):
         if out and deadline and time.perf_counter() > deadline:
             break
-        vals = means + shrink * (d.astype(float) - means)
-        lu = _solve(contest, pruner, _vector(dict(zip(keys, vals)), keys, opts), opts, set(), f"{label}{i + 1}")
+        vals = _masked(means + shrink * (d.astype(float) - means), keys, opts)
+        lu = _solve(contest, pruner, vals, opts, set(), f"{label}{i + 1}")
         if lu is not None:
             out.append(lu)
     return out
@@ -132,7 +142,7 @@ def stack_variants(contest: Contest, points: Mapping[str, float], n_qbs: int = 6
     qbs = [k for k in keys if "QB" in players[k].positions and k not in opts.exclude_keys]
     qbs = sorted(qbs, key=lambda k: -points[k])[:n_qbs]
     pruner = Pruner(contest, keys)
-    vals = _vector(points, keys, opts)
+    vals = _masked(np.array([points[k] for k in keys]), keys, opts)
     out = []
     for qb in qbs:
         team, opp = players[qb].team, players[qb].opponent
@@ -142,7 +152,7 @@ def stack_variants(contest: Contest, points: Mapping[str, float], n_qbs: int = 6
                 if out and deadline and time.perf_counter() > deadline:
                     return out
                 o = replace(opts, lock_keys=set(opts.lock_keys) | {qb}, qb_stack=s, bring_back=b)
-                lu = _solve(contest, pruner, vals, o, keep, f"stack:{team}:{s}+{b}")
+                lu = _solve(contest, pruner, vals, o, keep, f"stack:{team}:{s}+{b}", team_safe=True)
                 if lu is not None:
                     out.append(lu)
     return out
@@ -341,8 +351,8 @@ def rates_from_lineups(contest: Contest, lineups: Sequence[Lineup], points: Mapp
         for c in contest.candidates:
             if g in c.eligible_slots and c.player_key in points:
                 rows.setdefault(c.player_key, c)
-        rate = (lambda k: slot.get(g, {}).get(k, 0.0)) if multiplied else (lambda k: player.get(k, 0.0))
-        best = sorted(rows, key=lambda k: (-rate(k), -points[k]))[:top_n]
+        rate = slot.get(g, {}) if multiplied else player
+        best = sorted(rows, key=lambda k, rate=rate: (-rate.get(k, 0.0), -points[k]))[:top_n]
         for r, k in enumerate(best):
             p, c = contest.players[k], rows[k]
             table.append({"slot": g, "rank": r + 1, "player_key": k, "name": p.name, "team": p.team,
@@ -461,6 +471,8 @@ def select_lineups(contest: Contest, projections: Mapping[str, Projection], *, k
         fm = build_field(contest, projections, n_lineups=cfg.field_lineups, ownership=ownership,
                          target_top3=0.45 if k == "cash" else 0.35, seed=cfg.seed + 7,
                          time_budget_s=0.25 * budget)
+    elif ownership:
+        fm = fit_ownership(fm, contest, ownership, projections=projections)
     lap("field", t)
 
     t = time.perf_counter()
@@ -479,7 +491,7 @@ def select_lineups(contest: Contest, projections: Mapping[str, Projection], *, k
     if sport.lower() in ("nfl", "cfb") and cfg.stack_qbs:
         cands += stack_variants(contest, pts, cfg.stack_qbs, cfg.stack_sizes, cfg.bring_backs, base, t + 0.1 * budget)
     lap("stacks", t)
-    if cfg.n_field_candidates and _can_prune(base) and not base.lock_keys and not base.exclude_keys:
+    if cfg.n_field_candidates and _unconstrained(base):
         order = np.argsort(-fm.weights)[:cfg.n_field_candidates]
         cands += [fm.lineups[i].model_copy(update={"label": f"field{r + 1}"}) for r, i in enumerate(order)]
     cands = dedupe(cands + half + draws)

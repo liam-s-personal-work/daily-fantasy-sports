@@ -138,3 +138,21 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
                "llm": runner.summary()}
     (run_dir / "lastcall.json").write_text(json.dumps(summary, indent=1, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o)))
     return summary
+
+
+def kickoff_windows(run_dir: Path, lead_minutes: int = 60) -> list[dict[str, Any]]:
+    """Kickoff windows that still hold picks, with when to run the last call for each.
+
+    NFL inactives come out about 90 minutes before each kickoff, so one pass per window at
+    roughly T-60 sees them; late swap lets each window be revisited separately (not showdown).
+    """
+    from datetime import timedelta
+    st = load_run(run_dir)
+    c: Contest = st["contest"]
+    by_time: dict[datetime, list[str]] = {}
+    for s in st["final"].slots:
+        t = c.players[s.player_key].start_time
+        if t is not None:
+            by_time.setdefault(t, []).append(c.players[s.player_key].name)
+    return [{"kickoff": t.isoformat(), "run_lastcall_at": (t - timedelta(minutes=lead_minutes)).isoformat(),
+             "picks": names} for t, names in sorted(by_time.items())]

@@ -49,43 +49,32 @@ def add_actual_points(data: NFLData, tables: Iterable[str] = TABLES) -> None:
     recs = offense_stat_line(pg).to_dict("records")
     for t in tables:
         pg[f"fp_{t}"] = [score(r, t, role="offense") for r in recs]
-    tg = _dst_frame(data)
+    tg = data.team_games
     rows = tg.to_dict("records")
     for t in tables:
         tg[f"dst_{t}"] = [score(dst_stat_line(r, t), t, role="dst") if r["played"] else np.nan for r in rows]
 
 
 def dst_stat_line(row: pd.Series, table_id: str) -> dict:
-    """One team-game row -> dfs.scoring DST stats. Points allowed follow the site's convention:
-    DK = opponent points minus the opponent's defensive TDs (+XP) and safeties; FD = the formula
-    6 * (offensive TDs + own-fumble-recovery TDs) + 2pt + XP + 3 * FG of the opponent offense."""
+    """One team-game row -> dfs.scoring DST stats.
+
+    Sacks are the opponent's official sacks taken (team sacks are not credited to a defender);
+    defensive TDs include fumble-recovery TDs; blocked kicks include PATs. Points allowed: DK =
+    opponent points minus 6 per opponent defensive TD (the XP after it still counts) and 2 per
+    safety; FD = the site formula 6 * (offensive TDs + own-fumble-recovery TDs) + 2 * 2pt + XP +
+    3 * FG of the opponent. These conventions reproduce the 2026 weeks 1-5 DST averages printed in
+    real DK and FD salary files for every team on the week-6 main slates (the 7 games involving a
+    defensive or return TD decide between the alternatives).
+    """
     v = lambda k: float(np.nan_to_num(row.get(k, 0.0) if hasattr(row, "get") else row[k]))
-    if table_id.startswith("fanduel") and pd.notna(row.get("_opp_offense")):
-        pa = v("_opp_offense")
+    if table_id.startswith("fanduel") and pd.notna(row.get("opp_fd_pa")):
+        pa = v("opp_fd_pa")
     else:
-        pa = v("opp_points") - 7 * v("opp_def_tds") - 2 * v("opp_def_safeties")
-    return {"sack": v("def_sacks_made"), "interception": v("def_int_made"), "fumble_recovery": v("def_fr_made"),
+        pa = v("opp_points") - 6 * v("opp_def_tds") - 2 * v("opp_def_safeties")
+    sacks = v("opp_sacks_suffered") if pd.notna(row.get("opp_sacks_suffered")) else v("def_sacks")
+    return {"sack": sacks, "interception": v("def_interceptions"), "fumble_recovery": v("fumble_recovery_opp"),
             "def_td": v("def_tds"), "return_td": v("special_teams_tds"), "safety": v("def_safeties"),
             "blocked_kick": v("blocks"), "two_pt_return": v("def_2pt_made"), "points_allowed": max(pa, 0.0)}
-
-
-def _dst_frame(data: NFLData) -> pd.DataFrame:
-    """Team-game rows with the defensive stats a DST scores (from nflverse team stats)."""
-    tg = data.team_games
-    if "def_sacks_made" in tg.columns:
-        return tg
-    ts = nv.load("team_stats", data.seasons)
-    ts["team"] = ts["team"].map(lambda t: nv.canonicalize(t, strict=False))
-    d = ts[["season", "week", "team", "def_sacks", "def_interceptions", "fumble_recovery_opp"]].rename(
-        columns={"def_sacks": "def_sacks_made", "def_interceptions": "def_int_made", "fumble_recovery_opp": "def_fr_made"})
-    off = ts[["season", "week", "team", "rushing_tds", "receiving_tds", "fumble_recovery_tds", "passing_2pt_conversions",
-              "rushing_2pt_conversions", "pat_made", "fg_made"]].copy()
-    off["_opp_offense"] = 6 * (off["rushing_tds"] + off["receiving_tds"] + off["fumble_recovery_tds"]) + \
-        2 * (off["passing_2pt_conversions"] + off["rushing_2pt_conversions"]) + off["pat_made"] + 3 * off["fg_made"]
-    off = off[["season", "week", "team", "_opp_offense"]].rename(columns={"team": "opponent"})
-    tg = tg.merge(d, on=["season", "week", "team"], how="left").merge(off, on=["season", "week", "opponent"], how="left")
-    data.team_games = tg
-    return tg
 
 
 # --------------------------------------------------------------------------- naive baselines
@@ -135,7 +124,8 @@ def dst_baselines(data: NFLData, season: int, week: int, teams: Iterable[str], t
 
 
 def evaluate_week(data: NFLData, season: int, week: int, params: NFLParams | None = None,
-                  tables: Sequence[str] = TABLES, n_sims: int = 4000, seed: int = 7) -> pd.DataFrame:
+                  tables: Sequence[str] = TABLES, n_sims: int = 4000, seed: int = 7,
+                  with_baselines: bool = True) -> pd.DataFrame:
     """Project (season, week) from prior data and join actuals + naive baselines (long format)."""
     add_actual_points(data, tables)
     tg = data.team_games
@@ -170,8 +160,8 @@ def evaluate_week(data: NFLData, season: int, week: int, params: NFLParams | Non
             rows[c] = rows["gsis_id"].map(players[c])
         rows.loc[~rows["projected"], ["played_mean", "mean", "p10", "p50", "p90"]] = 0.0
         rows.loc[~rows["projected"], "p_play"] = 0.0
-        base = naive_baselines(data, season, week, rows["gsis_id"], t)
-        rows = rows.join(base, on="gsis_id")
+        if with_baselines:
+            rows = rows.join(naive_baselines(data, season, week, rows["gsis_id"], t), on="gsis_id")
         # DST
         d = f[f["kind"] == "dst"].set_index("team")
         wk = tg[(tg["season"] == season) & (tg["week"] == week) & tg["played"]].set_index("team")
@@ -180,7 +170,8 @@ def evaluate_week(data: NFLData, season: int, week: int, params: NFLParams | Non
         dd["projected"] = dd["team"].isin(d.index)
         for c in ("played_mean", "mean", "p10", "p50", "p90", "p_play"):
             dd[c] = dd["team"].map(d[c])
-        dd = dd.join(dst_baselines(data, season, week, dd["team"], t), on="team")
+        if with_baselines:
+            dd = dd.join(dst_baselines(data, season, week, dd["team"], t), on="team")
         rows = pd.concat([rows, dd], ignore_index=True)
         rows["table"], rows["season"], rows["week"] = t, season, week
         out.append(rows)
@@ -256,7 +247,7 @@ def summary_table(res: pd.DataFrame, table_id: str, pool: str = "A") -> pd.DataF
         for name, col in MODELS.items():
             if pool == "B" and name == "model":
                 col = "mean"
-            if g[col].isna().all():
+            if col not in g.columns or g[col].isna().all():
                 continue
             gg = g.dropna(subset=[col])
             mm = metrics(gg, col, with_quantiles=(name == "model"))
@@ -293,6 +284,208 @@ def tuning_objective(res: pd.DataFrame, table_id: str = "draftkings.nfl") -> flo
     return float(np.mean([np.mean(np.abs(g["played_mean"] - g["actual"])) for _, g in r.groupby("pos")]))
 
 
+def bootstrap_mae_diff(res: pd.DataFrame, a: str, b: str, n_boot: int = 4000, seed: int = 0) -> tuple[float, float, float]:
+    """MAE(a) - MAE(b) with a 95% interval from resampling whole weeks (errors within a week are correlated)."""
+    r = res.dropna(subset=[a, b])
+    g = r.assign(ea=(r[a] - r["actual"]).abs(), eb=(r[b] - r["actual"]).abs()).groupby(["season", "week"])
+    sums = g[["ea", "eb"]].sum()
+    n = g.size().to_numpy()
+    ea, eb = sums["ea"].to_numpy(), sums["eb"].to_numpy()
+    point = ea.sum() / n.sum() - eb.sum() / n.sum()
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(n), (n_boot, len(n)))
+    diffs = (ea[idx].sum(1) - eb[idx].sum(1)) / n[idx].sum(1)
+    lo, hi = np.quantile(diffs, [0.025, 0.975])
+    return float(point), float(lo), float(hi)
+
+
+def calibration_table(res: pd.DataFrame, table_id: str) -> pd.DataFrame:
+    r = res[(res["table"] == table_id) & (res["pool"] == "A")]
+    rows = []
+    for pos, g in r.groupby("pos"):
+        slope, icpt = np.polyfit(g["played_mean"], g["actual"], 1)
+        rows.append({"pos": pos, "n": len(g), "below_p10": np.mean(g["actual"] < g["p10"]),
+                     "below_p50": np.mean(g["actual"] < g["p50"]), "above_p90": np.mean(g["actual"] > g["p90"]),
+                     "slope": slope, "intercept": icpt})
+    return pd.DataFrame(rows)
+
+
+def _md(df: pd.DataFrame, fmt: dict[str, str]) -> str:
+    cols = list(df.columns)
+    out = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    for _, r in df.iterrows():
+        out.append("| " + " | ".join(format(r[c], fmt.get(c, "")) if not isinstance(r[c], str) else r[c]
+                                     for c in cols) + " |")
+    return "\n".join(out) + "\n"
+
+
+def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame | None = None,
+                 tune_log: list[dict] | None = None, inactive: pd.DataFrame | None = None,
+                 path: Path = REPORT_PATH, notes: Sequence[str] = ()) -> str:
+    """Markdown report of measured results (every number computed from the frames passed in)."""
+    hs = sorted(set(zip(holdout["season"], holdout["week"])))
+    label = f"{hs[0][0]} weeks {hs[0][1]}-{hs[-1][1]}" if len({s for s, _ in hs}) == 1 else str(hs)
+    L = [f"# NFL baseline backtest: {label}", "",
+         f"Generated by `dfs.backtest.write_report` on {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC. "
+         "Every number below was computed from real nflverse games by the code in this repo.", ""]
+    L += ["## Protocol", "",
+          "- Each target week is projected from data strictly before that week (`dfs.data.nflverse.before`): "
+          "schedules with closing spread/total, the week's final injury report and weekly roster status "
+          "(game-day `INA` inactives are NOT used unless stated), the last depth-chart snapshot before game day, "
+          "and box scores / snap counts / ff_opportunity from earlier weeks only.",
+          "- Actual fantasy points: nflverse weekly box scores scored by `dfs.scoring.score` with the repo's "
+          "`draftkings.nfl` / `fanduel.nfl` tables. DST points allowed: DK = opponent points minus the "
+          "opponent's defensive TDs (+XP) and safeties; FD = the site formula from the opponent's offensive "
+          "TDs, 2-pt, XP and FG.",
+          f"- **Pool A** (primary): every QB/RB/WR/TE player-game with >= {SNAP_MIN:.0%} offensive snap share "
+          "in the target week, plus every DST. Same rows for every model. The model's point forecast is its "
+          "mean *conditional on playing* (QB: on starting), comparable with 'average when played' baselines.",
+          "- **Pool B**: pool A plus each team's top projected players (QB1, RB1-2, WR1-3, TE1) who did not "
+          "reach the snap threshold or did not play (actual = their real points, often 0). The model is "
+          "scored on its *unconditional* mean (availability included); baselines are unchanged.",
+          "- Baselines (point-in-time): `season_avg` = season-to-date average points per game played; `last3` "
+          "= last 3 games played; `xfp_avg` = season-to-date average of ff_opportunity expected fantasy points "
+          "(PPR; minus 0.5 x expected receptions for FD). Players with no game this season fall back to last "
+          "season, then to the position median.",
+          "- Metrics: MAE, RMSE, bias = mean(pred - actual), spearman = mean within-week rank correlation, "
+          "top3 = share of each week's actual top-3 at the position that were in the projected top-3, cover80 = "
+          "share of actuals inside [p10, p90] (target 0.80), pinball = mean quantile loss over p10/p50/p90.",
+          "- Hyper-parameters were tuned on 2024-2025 weeks 3-17 only (DK, pool A, mean of per-position MAE). "
+          "The 2026 weeks were not used for tuning.", ""]
+    for t in TABLES:
+        if t not in set(holdout["table"]):
+            continue
+        L += [f"## {t}: pool A", "", fmt_table(summary_table(holdout, t, "A"))]
+        rows = []
+        r = holdout[(holdout["table"] == t) & (holdout["pool"] == "A")]
+        for pos in ["ALL", *POSITIONS]:
+            g = r if pos == "ALL" else r[r["pos"] == pos]
+            if pos == "ALL":
+                g = g[g["pos"] != "DST"]
+            for b in ("base_xfp", "base_std", "base_last3"):
+                if b in g.columns and g[b].notna().any():
+                    d, lo, hi = bootstrap_mae_diff(g, "played_mean", b)
+                    rows.append({"pos": pos, "vs": b.replace("base_", ""), "MAE diff": d, "95% lo": lo, "95% hi": hi})
+        if rows:
+            L += [f"Model MAE minus baseline MAE ({t}, pool A; negative = model better; week-clustered bootstrap):", "",
+                  _md(pd.DataFrame(rows), {"MAE diff": ".3f", "95% lo": ".3f", "95% hi": ".3f"})]
+        L += [f"## {t}: pool B (availability included)", "", fmt_table(summary_table(holdout, t, "B"))]
+        L += [f"Calibration ({t}, pool A): share of actuals below p10 / p50 and above p90 (targets 0.10 / 0.50 / "
+              "0.10) and the OLS slope of actual on projected mean (1 = well scaled).", "",
+              _md(calibration_table(holdout, t), {"n": "d", "below_p10": ".3f", "below_p50": ".3f",
+                                                   "above_p90": ".3f", "slope": ".3f", "intercept": ".2f"})]
+    if inactive is not None:
+        L += ["## Post-inactives variant (game-day INA status known)", "",
+              "Same weeks with `NFLParams(use_inactives=True)`; only availability changes, so pool B is the "
+              "relevant comparison.", "", fmt_table(summary_table(inactive, TABLES[0], "B"))]
+    if tuning is not None:
+        ts = sorted(set(tuning["season"]))
+        L += [f"## Tuning set ({', '.join(map(str, ts))}, weeks {tuning['week'].min()}-{tuning['week'].max()}), "
+              "final parameters, DK pool A", "", fmt_table(summary_table(tuning, TABLES[0], "A"))]
+    L += ["## Parameters", "", "```", json.dumps({k: (dict(v) if isinstance(v, dict) or hasattr(v, 'items') else v)
+                                                  for k, v in asdict(params).items()}, indent=1), "```", ""]
+    if tune_log:
+        L += ["Tuning path (coordinate descent; objective = mean per-position MAE, DK pool A, 2024-2025 wk 3-17):", ""]
+        L += [f"- {h['objective']:.4f}  {json.dumps(h['params'])}" for h in tune_log]
+        L += [""]
+    if notes:
+        L += ["## Notes and known weaknesses", ""] + [f"- {n}" for n in notes] + [""]
+    text = "\n".join(L)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return text
+
+
+def pinball_objective(res: pd.DataFrame, table_id: str = "draftkings.nfl") -> float:
+    """Mean pinball loss (p10/p50/p90) across positions, pool A: the dispersion tuning target."""
+    r = res[(res["table"] == table_id) & (res["pool"] == "A")]
+    vals = []
+    for _, g in r.groupby("pos"):
+        y = g["actual"].to_numpy(float)
+        vals.append(np.mean([pinball(y, g[c].to_numpy(float), t).mean()
+                             for c, t in (("p10", 0.1), ("p50", 0.5), ("p90", 0.9))]))
+    return float(np.mean(vals))
+
+
+# --------------------------------------------------------------------------- tuning
+
+_TUNE_DATA: NFLData | None = None
+
+
+def params_from(overrides: dict) -> NFLParams:
+    """NFLParams with overrides; dotted keys set one entry of a dict field (``usage_cv.QB``)."""
+    base = NFLParams()
+    flat: dict = {}
+    for k, v in overrides.items():
+        if "." in k:
+            field, key = k.split(".", 1)
+            d = dict(flat.get(field, getattr(base, field)))
+            d[key] = v
+            flat[field] = d
+        else:
+            flat[k] = v
+    return base.with_(**flat)
+
+
+def _param_value(overrides: dict, name: str):
+    if name in overrides:
+        return overrides[name]
+    if "." in name:
+        field, key = name.split(".", 1)
+        return dict(getattr(NFLParams(), field)).get(key)
+    return getattr(NFLParams(), name)
+
+
+def _tune_week(args: tuple) -> pd.DataFrame:
+    season, week, overrides, n_sims = args
+    params = params_from(overrides)
+    return evaluate_week(_TUNE_DATA, season, week, params, tables=("draftkings.nfl",), n_sims=n_sims,
+                         with_baselines=False)
+
+
+def evaluate_many(data: NFLData, weeks: Sequence[tuple[int, int]], overrides: dict, n_sims: int = 1000,
+                  processes: int = 4) -> pd.DataFrame:
+    """Evaluate one parameter setting on many (season, week)s in parallel (fork shares ``data``)."""
+    import multiprocessing as mp
+
+    global _TUNE_DATA
+    _TUNE_DATA = data
+    jobs = [(s, w, overrides, n_sims) for s, w in weeks]
+    if processes <= 1:
+        return pd.concat([_tune_week(j) for j in jobs], ignore_index=True)
+    with mp.get_context("fork").Pool(processes) as pool:
+        return pd.concat(pool.map(_tune_week, jobs), ignore_index=True)
+
+
+def warm_cache(data: NFLData, weeks: Sequence[tuple[int, int]], params: NFLParams | None = None) -> None:
+    """Build the parameter-free per-week pieces once, before forking workers."""
+    add_actual_points(data)
+    for s, w in weeks:
+        build_context(data, s, w, params)
+
+
+def coordinate_descent(data: NFLData, weeks: Sequence[tuple[int, int]], grid: dict[str, list], start: dict | None = None,
+                       objective=None, n_sims: int = 1000, passes: int = 1, log=print) -> tuple[dict, list[dict]]:
+    """Greedy one-parameter-at-a-time search minimising ``objective(results)`` (default: pool-A MAE)."""
+    objective = objective or tuning_objective
+    best = dict(start or {})
+    best_val = objective(evaluate_many(data, weeks, best, n_sims))
+    history = [{"params": dict(best), "objective": best_val}]
+    log(f"start {best_val:.4f} {best}")
+    for _ in range(passes):
+        for name, values in grid.items():
+            for v in values:
+                if _param_value(best, name) == v:
+                    continue
+                trial = {**best, name: v}
+                val = objective(evaluate_many(data, weeks, trial, n_sims))
+                history.append({"params": trial, "objective": val})
+                log(f"  {name}={v}: {val:.4f}" + ("  *" if val < best_val - 1e-4 else ""))
+                if val < best_val - 1e-4:
+                    best, best_val = trial, val
+    return best, history
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -303,6 +496,25 @@ def _weeks(s: str) -> list[int]:
     return [int(x) for x in s.split(",")]
 
 
+KNOWN_WEAKNESSES = [
+    "No player props or opponent-specific player adjustments: the market enters only through team "
+    "spread/total; props would be the strongest single extra input.",
+    "Usage is share-based without routes or alignment data; role changes inside a week (new starter "
+    "announced, trade) reach the model only via the depth chart snapshot and the injury report.",
+    "QB starter identification picks the actual starter ~93-95% of the time from depth chart + last "
+    "start + availability; a wrong pick moves the QB and his receivers. The LLM research stage must "
+    "confirm starters.",
+    "Pool A conditions on >= 25% snaps, which biases every model's error low for players who barely "
+    "played and makes low projections look under-projected (selection effect on the snap threshold).",
+    "Week 17-18 rest decisions, weather, and in-game injury risk beyond a flat per-position early-exit "
+    "rate are not modelled.",
+    "DST points allowed conventions were inferred from 2026 site averages (20/20 teams reproduced on DK "
+    "and FD); DK's rule (opponent points minus 6 per opponent defensive TD, the XP still counts) "
+    "differs from the research note and should be re-checked as more games accumulate.",
+    "Stat-line simulation draws players independently; cross-player correlation is left to dfs.sim.",
+]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--season", type=int, default=nv.current_season())
@@ -310,16 +522,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--sims", type=int, default=4000)
     ap.add_argument("--params", help="JSON file of NFLParams overrides")
     ap.add_argument("--out", help="write per-player results to this parquet/csv")
+    ap.add_argument("--report", action="store_true", help=f"write the markdown report to {REPORT_PATH}")
+    ap.add_argument("--tune-seasons", default="", help="also evaluate these seasons (e.g. 2024,2025) in the report")
+    ap.add_argument("--tune-weeks", default="3-17")
+    ap.add_argument("--tune-log", help="JSON file with the tuning history to include in the report")
     args = ap.parse_args(argv)
-    params = NFLParams()
-    if args.params:
-        params = params.with_(**json.loads(Path(args.params).read_text()))
-    res = run_backtest(args.season, _weeks(args.weeks), params, n_sims=args.sims)
+    params = params_from(json.loads(Path(args.params).read_text())) if args.params else NFLParams()
+    tune_seasons = [int(x) for x in args.tune_seasons.split(",") if x]
+    first = min([args.season, *tune_seasons]) - 7
+    data = NFLData.load(range(first, args.season + 1))
+    res = run_backtest(args.season, _weeks(args.weeks), params, n_sims=args.sims, data=data)
     for t in TABLES:
         print(f"\n## {t} {args.season} weeks {args.weeks} (pool A)\n")
         print(fmt_table(summary_table(res, t)))
     if args.out:
         (res.to_parquet if args.out.endswith(".parquet") else res.to_csv)(args.out)
+    if args.report:
+        inactive = run_backtest(args.season, _weeks(args.weeks), params.with_(use_inactives=True), n_sims=args.sims,
+                                data=data, tables=TABLES[:1])
+        tuning = None
+        if tune_seasons:
+            tuning = pd.concat([run_backtest(s, _weeks(args.tune_weeks), params, n_sims=args.sims, data=data,
+                                             tables=TABLES[:1]) for s in tune_seasons], ignore_index=True)
+        log = json.loads(Path(args.tune_log).read_text()).get("history") if args.tune_log else None
+        write_report(res, params, tuning=tuning, tune_log=log, inactive=inactive, notes=KNOWN_WEAKNESSES)
+        print(f"wrote {REPORT_PATH}")
     return 0
 
 
