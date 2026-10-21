@@ -10,6 +10,7 @@ DK accepts the bare ``ID`` (or "Name (ID)"); FD accepts the ``Id`` ("123-456"). 
 from __future__ import annotations
 
 import csv
+import os
 import io
 from pathlib import Path
 
@@ -27,8 +28,10 @@ def _ids(contest: Contest, lineup: Lineup) -> list[str]:
 
 
 def upload_rows(contest: Contest, lineups: list[Lineup], entry_ids: list[str] | None = None,
-                only_changed: bool = True) -> list[list[str]]:
-    """Rows for the upload CSV. With entries, lineup i goes to entry_ids[i] (default: file order)."""
+                only_changed: bool = True, started_ids: set[str] | None = None) -> list[list[str]]:
+    """Rows for the upload CSV. With entries, lineup i goes to entry_ids[i] (default: file order).
+    ``started_ids``: players whose games have started; their cells must not change and they cannot be added."""
+    live = started_ids or set()
     if not contest.entries:
         return [list(contest.slot_headers)] + [_ids(contest, lu) for lu in lineups]
 
@@ -47,8 +50,10 @@ def upload_rows(contest: Contest, lineups: list[Lineup], entry_ids: list[str] | 
             raise UploadError(f"entry {eid} is not in the entries file")
         new = _ids(contest, lu)
         for i, (was, locked) in enumerate(zip(e.current, e.locked)):
-            if locked and was != new[i]:
-                raise UploadError(f"entry {eid}: slot {i + 1} is locked to {was}; lineup has {new[i]}")
+            if (locked or was in live) and was and was != new[i]:
+                raise UploadError(f"entry {eid}: slot {i + 1} is locked to {was} (game started); lineup has {new[i]}")
+            if new[i] in live and new[i] != was:
+                raise UploadError(f"entry {eid}: slot {i + 1} adds {new[i]}, whose game has started")
         if only_changed and new == list(e.current):
             continue
         meta = [e.entry_id, e.contest_name, e.contest_id, e.entry_fee or ""] if contest.rules.site == Site.DRAFTKINGS \
@@ -58,10 +63,14 @@ def upload_rows(contest: Contest, lineups: list[Lineup], entry_ids: list[str] | 
 
 
 def write_upload(contest: Contest, lineups: list[Lineup], path: str | Path, **kw) -> Path:
+    """Validate first, then replace the file atomically: a failed check never leaves a broken upload."""
     path = Path(path)
+    rows = upload_rows(contest, lineups, **kw)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows(upload_rows(contest, lineups, **kw))
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+    os.replace(tmp, path)
     return path
 
 

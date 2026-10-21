@@ -50,7 +50,7 @@ def load_rules(site: Site | str, sport: str, game_type: str) -> ContestRules:
                   salary_multiplier=float(s[3]) if len(s) > 3 else 1.0) for s in entry["slots"]]
     return ContestRules(
         site=site, sport=sport, game_type=game_type, salary_cap=int(entry["salary_cap"]), slots=slots,
-        max_per_team=entry.get("max_per_team"), min_teams=entry.get("min_teams"), min_games=entry.get("min_games"),
+        max_per_team=entry.get("max_per_team"), max_hitters_per_team=entry.get("max_hitters_per_team"), min_teams=entry.get("min_teams"), min_games=entry.get("min_games"),
         multiplier_rows=bool(entry.get("multiplier_rows", False)), scoring=entry["scoring"],
         late_swap=bool(entry.get("late_swap", False)), salary_column_by_slot=entry.get("salary_column_by_slot") or {},
         confidence=entry.get("confidence", "medium"), notes=list(entry.get("notes") or []),

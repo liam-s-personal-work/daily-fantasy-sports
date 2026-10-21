@@ -114,10 +114,11 @@ contests:
     salary_cap: 50000
     slots: [[P, [SP, RP, P]], [P, [SP, RP, P]], [C, [C]], [1B, [1B]], [2B, [2B]], [3B, [3B]], [SS, [SS]], [OF, [OF]], [OF, [OF]], [OF, [OF]]]
     min_games: 2
+    max_hitters_per_team: 5
     late_swap: true
     scoring: draftkings.mlb
     confidence: medium
-    notes: ["Max 5 hitters from one team (not yet enforced as a hitter-only cap)."]
+    notes: ["Max 5 hitters (non-pitchers) from one team."]
   fanduel.mlb.classic:
     salary_cap: 35000
     slots: [[P, [P]], [C/1B, [C, 1B]], [2B, [2B]], [3B, [3B]], [SS, [SS]], [OF, [OF]], [OF, [OF]], [OF, [OF]], [UTIL, [C, 1B, 2B, 3B, SS, OF]]]

@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from dfs import blend as blend_mod
 from dfs.io.contest_file import load_contest
-from dfs.io.upload import write_upload
+from dfs.io.upload import UploadError, write_upload
 from dfs.llm.backend import Backend, Runner, default_backend
 from dfs.models import Contest, ContestKind, GameDossier, Lineup, Projection, UserRules
 from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, lineup_points, solve
@@ -45,28 +45,46 @@ class SlateStarted(RuntimeError):
     """Every game in the file has kicked off: nothing can be entered or swapped any more."""
 
 
-def entry_lock_groups(contest: Contest) -> dict[tuple, list[int]]:
-    """Entry rows grouped by their locked cells ((slot index, site id), ...); unlocked rows share ()."""
+def started_ids(contest: Contest, now: datetime | None) -> set[str]:
+    """Site ids of players whose games have started (they can be neither added nor moved)."""
+    if now is None:
+        return set()
+    return {c.site_id for c in contest.candidates
+            if (t := contest.players[c.player_key].start_time) is not None and t <= now}
+
+
+def entry_lock_groups(contest: Contest, now: datetime | None = None) -> dict[tuple, list[int]]:
+    """Entry rows grouped by their locked cells ((slot index, site id), ...); unlocked rows share ().
+    A cell is locked when the file marks it (LOCKED) or its player's game has started by ``now``."""
+    live = started_ids(contest, now)
     groups: dict[tuple, list[int]] = {}
     for i, e in enumerate(contest.entries):
-        locks = tuple((j, sid) for j, (sid, lk) in enumerate(zip(e.current, e.locked)) if lk and sid)
+        locks = tuple((j, sid) for j, (sid, lk) in enumerate(zip(e.current, e.locked)) if sid and (lk or sid in live))
         groups.setdefault(locks, []).append(i)
     return groups
 
 
-def safety_lineups(contest: Contest, points: dict[str, float], started: set[str]) -> list[Lineup]:
-    """One legal lineup per entry row (one in total without entries): started players are not added,
-    and each entry's locked cells stay where they are."""
+def safety_lineups(contest: Contest, points: dict[str, float], started: set[str],
+                   now: datetime | None = None) -> tuple[list[Lineup], list[str] | None]:
+    """One legal lineup per entry row (one in total without entries), with the entry id of each:
+    started players are not added, and each entry's locked cells stay where they are. Entries that
+    can no longer be given a legal lineup are left out (they keep what they have on the site)."""
     if not contest.entries:
         return [solve(contest, points, SolveOptions(time_limit_s=20, exclude_keys=set(started)),
-                      label="safety (baseline mean)")]
+                      label="safety (baseline mean)")], None
     out: list[Lineup | None] = [None] * len(contest.entries)
-    for locks, idx in entry_lock_groups(contest).items():
-        lu = solve(contest, points, SolveOptions(time_limit_s=20, exclude_keys=set(started), slot_locks=dict(locks)),
-                   label="safety (baseline mean)")
+    for locks, idx in entry_lock_groups(contest, now).items():
+        try:
+            lu = solve(contest, points, SolveOptions(time_limit_s=20, exclude_keys=set(started),
+                                                     slot_locks=dict(locks)), label="safety (baseline mean)")
+        except Infeasible:
+            continue
         for i in idx:
             out[i] = lu
-    return [lu for lu in out if lu is not None]
+    keep = [i for i, lu in enumerate(out) if lu is not None]
+    if not keep:
+        raise Infeasible("no entry can be given a legal lineup from the players still available")
+    return [out[i] for i in keep], [contest.entries[i].entry_id for i in keep]
 
 
 @dataclass
@@ -224,9 +242,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
                                "nothing can be entered or swapped. To test on a past slate, pass --now with a "
                                "time before its first kickoff.")
     try:  # a legal safety lineup within the first minutes, in case anything later fails or runs long
-        safety = safety_lineups(contest, {k: p.mean for k, p in ctx.baseline.items() if k not in ctx.ruled_out},
-                                started)
-        write_upload(contest, safety, run_dir / "upload_safety.csv", only_changed=False)
+        safety, safety_ids = safety_lineups(contest, {k: p.mean for k, p in ctx.baseline.items()
+                                                      if k not in ctx.ruled_out}, started, t_now)
+        write_upload(contest, safety, run_dir / "upload_safety.csv", only_changed=False,
+                     entry_ids=safety_ids, started_ids=started_ids(contest, t_now))
         clock.mark(f"safety lineup written (mean {safety[0].mean:.1f})")
     except Exception as e:  # never block the run on the safety net
         log(f"safety lineup failed: {e}")
@@ -279,16 +298,23 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     clock.mark(f"decision: {decision.final.label} mean {decision.final.mean:.1f}")
 
     # 12. outputs
-    upload = write_upload(contest, decision.lineups, run_dir / "upload.csv", only_changed=False)
+    upload = write_upload(contest, decision.lineups, run_dir / "upload.csv", only_changed=False,
+                          entry_ids=decision.entry_ids, started_ids=started_ids(contest, t_now))
     rules_upload = None
     if decision.rules_lineup is not None:
-        rules_upload = write_upload(contest, [decision.rules_lineup], run_dir / "upload_my_rules.csv", only_changed=False)
+        try:
+            rules_upload = write_upload(contest, [decision.rules_lineup], run_dir / "upload_my_rules.csv",
+                                        only_changed=False, started_ids=started_ids(contest, t_now))
+        except UploadError as e:  # e.g. the first entry's locked cells conflict with your rules
+            decision.report["user_rules_error"] = f"rules lineup not written: {e}"
+            log(f"WARNING: rules lineup not written: {e}")
     report = {
         "contest": {"site": contest.rules.site.value, "sport": sport, "game_type": contest.rules.game_type,
                     "kind": contest.kind.value, "games": contest.games, "warnings": contest.warnings,
                     "rules_confidence": contest.rules.confidence},
         "timing_s": clock.marks, "llm": runner.summary(), "decision": decision.report,
         "final": decision.final, "rules_lineup": decision.rules_lineup, "lineups": decision.lineups,
+        "entry_ids": decision.entry_ids,
         "stage_lineups": decision.stage_lineups, "legal": check_legal(contest, decision.final),
         "config": {k: (str(v) if isinstance(v, Path) else v.model_dump() if hasattr(v, "model_dump") else v)
                    for k, v in cfg.__dict__.items()},

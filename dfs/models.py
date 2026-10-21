@@ -44,6 +44,7 @@ class ContestRules(BaseModel):
     salary_cap: int
     slots: list[Slot]
     max_per_team: int | None = None
+    max_hitters_per_team: int | None = None  # DK MLB: at most 5 hitters (non-pitchers) from one team
     min_teams: int | None = None
     min_games: int | None = None
     # A multiplied slot (CPT/MVP) appears as its own CSV row with its own ID and salary (DK showdown).

@@ -16,7 +16,7 @@ from __future__ import annotations
 import csv
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -24,6 +24,9 @@ from dfs.models import Candidate, Contest, ContestKind, ContestRules, Entry, Pla
 from dfs.rules import NFL_TEAMS, POSITION_SPORT, load_rules
 
 ET = ZoneInfo("America/New_York")
+# DK replaces Game Info with 'In Progress' / 'Final' once a game starts; those players get this start time.
+STARTED_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
+LIVE_PREFIX = "LIVE:"  # game label for a started game whose matchup the file no longer shows
 DK_POOL_HEADER = ["Position", "Name + ID", "Name", "ID", "Roster Position", "Salary", "Game Info", "TeamAbbrev"]
 CASH_WORDS = ("double up", "double-up", "50/50", "head-to-head", "h2h", "triple up", "quintuple up", "cash")
 SLOT_ALIASES = {"SUPER FLEX": "SUPERFLEX", "S-FLEX": "SUPERFLEX", "SFLEX": "SUPERFLEX", "SUPER-FLEX": "SUPERFLEX",
@@ -47,16 +50,24 @@ def norm_name(name: str) -> str:
     return s
 
 
-def player_key(team: str, name: str, position: str) -> str:
+def player_key(team: str, name: str, position: str, sport: str | None = None) -> str:
+    """Stable key "TEAM|name|POS". Football team defenses (DK 'DST', FD 'D'/'DEF') collapse to one key per
+    team; in other sports 'D' is a real player (NHL defenseman, soccer defender, NASCAR driver)."""
     pos = position.upper()
-    if pos in ("DST", "D", "DEF"):
+    if pos == "DST" or (pos in ("D", "DEF") and (sport or "nfl") in ("nfl", "cfb")):
         return f"{team.upper()}|dst|DST"
     return f"{team.upper()}|{norm_name(name)}|{pos}"
 
 
 def read_rows(path: str | Path) -> list[list[str]]:
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        return [list(r) for r in csv.reader(f)]
+    """UTF-8 (with or without BOM); a file re-saved by Excel on Windows (cp1252) is read as such."""
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            with open(path, newline="", encoding=enc) as f:
+                return [list(r) for r in csv.reader(f)]
+        except UnicodeDecodeError:
+            continue
+    raise ContestFileError(f"{path}: not UTF-8 or Windows-1252 text; re-download the file from the site")
 
 
 def _find(rows: list[list[str]], first: str, second: str, max_rows: int = 40) -> tuple[int, int] | None:
@@ -107,7 +118,10 @@ def _col(header: list[str]) -> dict[str, int]:
 
 
 def _parse_game_info(info: str) -> tuple[str | None, datetime | None]:
-    """'BUF@MIA 10/26/2026 01:00PM ET' -> ('BUF@MIA', aware datetime); tournaments -> (None, None)."""
+    """'BUF@MIA 10/26/2026 01:00PM ET' -> ('BUF@MIA', aware datetime); tournaments -> (None, None);
+    'In Progress' / 'Final' (DK, once a game starts) -> (LIVE_PREFIX, STARTED_AT)."""
+    if re.match(r"^\s*(in progress|final)\b", info or "", re.I):
+        return LIVE_PREFIX, STARTED_AT
     m = re.match(r"^\s*([A-Za-z0-9&.]+@[A-Za-z0-9&.]+)\s+(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}[AP]M)", info or "")
     if m:
         return m.group(1).upper(), datetime.strptime(m.group(2), "%m/%d/%Y %I:%M%p").replace(tzinfo=ET)
@@ -130,14 +144,16 @@ def _detect_sport(positions: set[str], teams: set[str], site: Site, has_cpt: boo
             return sport
     if teams == {"GOLF"} or positions == {"G"}:
         return "pga"
-    if positions <= {"QB", "RB", "WR", "TE", "DST", "D", "K", "FB"}:
-        return "nfl" if teams and teams <= NFL_TEAMS else "cfb"
+    if positions == {"D"} and site == Site.DRAFTKINGS:
+        return "nascar"
+    if positions <= {"QB", "RB", "WR", "TE", "DST", "D", "K", "FB"} and positions & {"QB", "RB", "WR"}:
+        # College files have no team defenses or kickers, and school codes can collide with NFL codes
+        nfl_only = positions & {"DST", "D", "K", "TE"}
+        return "nfl" if teams and teams <= NFL_TEAMS and (nfl_only or len(teams) > 2) else "cfb"
     if positions <= {"C", "W", "D", "G"}:
         return "nhl"
     if positions == {"F"}:
         return "mma"
-    if positions == {"D"} and site == Site.DRAFTKINGS:
-        return "nascar"
     if positions == {"P"}:
         return "cs2" if has_cpt else "tennis"
     raise ContestFileError(f"cannot tell the sport from positions {sorted(positions)}; pass sport= explicitly")
@@ -204,7 +220,9 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
             game, start = _parse_game_info(get("Game Info"))
             team = get("TeamAbbrev").upper()
             opp = None
-            if game:
+            if game == LIVE_PREFIX:  # started: the matchup is gone from the file, so one label per team
+                game = f"{LIVE_PREFIX}{team}"
+            elif game:
                 a, h = game.split("@")
                 opp = h if team == a else a if team == h else None
             raw.append(dict(id=get("ID"), name=get("Name"), display=get("Name + ID"), positions=positions,
@@ -239,7 +257,11 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
     all_pos = {p.upper() for x in raw for p in x["positions"]}
     teams = {x["team"] for x in raw if x["team"]}
     sport = sport or _detect_sport(all_pos, teams, site, has_cpt)
-    games = sorted({x["game"] for x in raw if x["game"]})
+    games = sorted({x["game"] for x in raw if x["game"] and not x["game"].startswith(LIVE_PREFIX)})
+    n_live = sum(1 for x in raw if x["start"] is STARTED_AT)
+    if n_live:
+        warnings.append(f"{n_live} player rows are in games already in progress or final: they stay where they are "
+                        "and cannot be added")
     if game_type is None:
         if has_cpt:
             game_type = "showdown"
@@ -252,7 +274,7 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
     # Candidates: one per (row, slot-family). DK CPT rows and FD MVP pricing become their own candidates.
     cands: list[Candidate] = []
     for x in raw:
-        key = player_key(x["team"], x["name"], x["positions"][0] if x["positions"] else "?")
+        key = player_key(x["team"], x["name"], x["positions"][0] if x["positions"] else "?", sport)
         if key not in players:
             players[key] = Player(key=key, name=x["name"].strip(), team=x["team"], opponent=x["opp"],
                                   positions=[p.upper() for p in x["positions"]], game=x["game"],

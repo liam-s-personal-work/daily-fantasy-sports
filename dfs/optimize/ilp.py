@@ -8,6 +8,7 @@ least k players" cuts for building several distinct lineups.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -15,6 +16,7 @@ from ortools.sat.python import cp_model
 
 from dfs.models import Candidate, Contest, Lineup, LineupSlot, UserRules
 
+PITCHERS = {"P", "SP", "RP"}
 SCALE = 100  # CP-SAT needs integer coefficients: points are solved in hundredths
 
 
@@ -38,20 +40,71 @@ class Infeasible(RuntimeError):
     pass
 
 
+class RuleError(Infeasible):
+    """A pick rule that names an unknown or ambiguous player, team or game."""
+
+
+def _team_code(contest: Contest, team: str) -> str:
+    """The contest's own code for a team the user named (aliases such as JAC/JAX, LA/LAR, WSH/WAS)."""
+    teams = {p.team.upper() for p in contest.players.values()}
+    up = team.strip().upper()
+    if up in teams:
+        return up
+    if contest.rules.sport == "nfl":
+        from dfs.data.teams import canonicalize
+        want = canonicalize(up, strict=False)
+        hit = [t for t in teams if canonicalize(t, strict=False) == want]
+        if len(hit) == 1:
+            return hit[0]
+    raise RuleError(f"rule names team {team!r}, which is not in this contest ({', '.join(sorted(teams))})")
+
+
+def _game_code(contest: Contest, game: str) -> str:
+    if "@" not in game:
+        raise RuleError(f"rule game {game!r} should look like AWAY@HOME")
+    a, h = (_team_code(contest, t) for t in game.split("@", 1))
+    g = f"{a}@{h}"
+    if g not in {x.upper() for x in contest.games}:
+        raise RuleError(f"rule names game {game!r}, which is not in this contest ({', '.join(contest.games)})")
+    return g
+
+
 def _resolve_names(contest: Contest, names: list[str]) -> set[str]:
-    """Accept player keys or (case-insensitive) display names from the user."""
+    """Accept player keys, display names, or 'Name (TEAM)' when a name is shared by two players."""
     out: set[str] = set()
     by_name: dict[str, list[str]] = defaultdict(list)
     for k, p in contest.players.items():
         by_name[p.name.lower()].append(k)
     for n in names:
+        m = re.match(r"^\s*(.+?)\s*\(([A-Za-z]{2,4})\)\s*$", n)
         if n in contest.players:
             out.add(n)
+        elif m and m.group(1).lower() in by_name:
+            team = _team_code(contest, m.group(2))
+            hit = [k for k in by_name[m.group(1).lower()] if contest.players[k].team.upper() == team]
+            if not hit:
+                raise RuleError(f"rule names {n!r}, but {m.group(1)} is not on {team} in this contest")
+            out.update(hit)
         elif n.lower() in by_name:
-            out.update(by_name[n.lower()])
+            hit = by_name[n.lower()]
+            if len({contest.players[k].team for k in hit}) > 1:
+                opts = ", ".join(f"'{contest.players[k].name} ({contest.players[k].team})'" for k in hit)
+                raise RuleError(f"rule name {n!r} matches more than one player; write one of {opts}")
+            out.update(hit)
         else:
-            raise KeyError(f"rule names unknown player {n!r}")
+            raise RuleError(f"rule names unknown player {n!r}")
     return out
+
+
+def validate_rules(contest: Contest, ur: UserRules) -> None:
+    """Raise RuleError naming the first unknown or ambiguous player, team or game in the user's rules."""
+    _resolve_names(contest, list(ur.lock) + list(ur.exclude))
+    for t in ur.exclude_teams:
+        _team_code(contest, t)
+    for g in ur.exclude_games:
+        _game_code(contest, g)
+    for st in ur.stack:
+        _team_code(contest, st["team"])
 
 
 def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None = None,
@@ -66,8 +119,8 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
     lock = set(opts.lock_keys) | _resolve_names(contest, ur.lock)
     if lock & exclude:
         raise Infeasible(f"players both locked and excluded: {sorted(lock & exclude)}")
-    bad_teams = {t.upper() for t in ur.exclude_teams}
-    bad_games = {g.upper() for g in ur.exclude_games}
+    bad_teams = {_team_code(contest, t) for t in ur.exclude_teams}
+    bad_games = {_game_code(contest, g) for g in ur.exclude_games}
 
     locked_ids = set(opts.slot_locks.values())
 
@@ -122,12 +175,18 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
         m.Add(salary >= min_sal)
 
     team_vars: dict[str, list] = defaultdict(list)
+    hitter_vars: dict[str, list] = defaultdict(list)
     game_vars: dict[str, list] = defaultdict(list)
     for (ci, _), v in x.items():
         p = contest.players[cands[ci].player_key]
         team_vars[p.team].append(v)
+        if not set(p.positions) & PITCHERS:
+            hitter_vars[p.team].append(v)
         if p.game:
             game_vars[p.game].append(v)
+    if rules.max_hitters_per_team:
+        for vs in hitter_vars.values():
+            m.Add(sum(vs) <= rules.max_hitters_per_team)
 
     max_team = min(filter(None, [rules.max_per_team, ur.max_from_team]), default=None)
     if max_team:
@@ -161,7 +220,7 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
 
     # Stacks expressed in user rules: {"team": "BUF", "positions": ["WR","TE"], "min": 2}
     for st in ur.stack:
-        team = st["team"].upper()
+        team = _team_code(contest, st["team"])
         pos = set(st.get("positions") or [])
         vs = [v for (ci, _), v in x.items()
               if contest.players[cands[ci].player_key].team.upper() == team
@@ -254,6 +313,7 @@ def check_legal(contest: Contest, lineup: Lineup) -> list[str]:
     seen: set[str] = set()
     salary = 0
     teams: dict[str, int] = defaultdict(int)
+    hitters: dict[str, int] = defaultdict(int)
     games: set[str] = set()
     for ls in lineup.slots:
         options = rows.get(ls.site_id)
@@ -270,12 +330,16 @@ def check_legal(contest: Contest, lineup: Lineup) -> list[str]:
         salary += c.salary
         p = contest.players[c.player_key]
         teams[p.team] += 1
+        if not set(p.positions) & PITCHERS:
+            hitters[p.team] += 1
         if p.game:
             games.add(p.game)
     if salary > rules.salary_cap:
         problems.append(f"salary {salary} over cap {rules.salary_cap}")
     if rules.max_per_team and any(n > rules.max_per_team for n in teams.values()):
         problems.append(f"more than {rules.max_per_team} from one team")
+    if rules.max_hitters_per_team and any(n > rules.max_hitters_per_team for n in hitters.values()):
+        problems.append(f"more than {rules.max_hitters_per_team} hitters from one team")
     if rules.min_teams and len(teams) < rules.min_teams:
         problems.append(f"fewer than {rules.min_teams} teams")
     if rules.min_games and len(games) < rules.min_games:

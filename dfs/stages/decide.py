@@ -30,6 +30,7 @@ class Decision:
     drafts: list[Lineup]
     report: dict[str, Any]
     stage_lineups: dict[str, Lineup] = field(default_factory=dict)
+    entry_ids: list[str] | None = None  # entry for each of ``lineups`` (entries files only)
 
 
 class Decider:
@@ -49,6 +50,8 @@ class Decider:
         self.report: dict[str, Any] = {}
         self.priced = set(priced)  # fact ids the forecaster already saw
         # Players whose games have started can no longer be added (late swap); locked cells stay.
+        self.now = now
+        self._fallback_locks: dict[int, str] = {}  # when no fresh lineup is possible (late swap), solve around locks
         self.started = {k for k, p in contest.players.items() if now and p.start_time and p.start_time <= now}
 
     # ------------------------------------------------------------------ helpers
@@ -69,7 +72,8 @@ class Decider:
                 for k in points if k in self.proj}
         res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=self.kind,
                                target_top=self.cfg.target_top, n=n or 1, exclude=set(exclude) | self.started,
-                               user_rules=user_rules, seed=self.cfg.seed, scale=scale, slot_locks=slot_locks)
+                               user_rules=user_rules, seed=self.cfg.seed, scale=scale,
+                               slot_locks=self._fallback_locks if slot_locks is None else slot_locks)
         for lu in res["lineups"]:
             lu.label = label
         return res["lineups"][0], res
@@ -106,7 +110,18 @@ class Decider:
             main_ok = False
             self.report["strategist"] = {"error": strat.error}
 
-        final, res = self._choose(means, excluded, "final")
+        try:
+            final, res = self._choose(means, excluded, "final")
+        except Infeasible:
+            # Late swap: the unstarted games alone may not make a legal lineup (e.g. one game left and a
+            # two-game minimum). Then the main lineup is built around the largest group of locked entries.
+            from dfs.pipeline import entry_lock_groups
+            groups = [(locks, idx) for locks, idx in entry_lock_groups(c, self.now).items() if locks]
+            if not groups:
+                raise
+            self._fallback_locks = dict(max(groups, key=lambda g: len(g[1]))[0])
+            self.report["built_around_locks"] = self._fallback_locks
+            final, res = self._choose(means, excluded, "final")
         stage["after_strategist"] = final
 
         # Checker: code decides, up to 2 revisions.
@@ -155,31 +170,43 @@ class Decider:
         legal = check_legal(c, final)
         if legal:
             raise Infeasible(f"final lineup failed the independent legality check: {legal}")
-        lineups = self._entry_lineups(final, bpoints if self.report.get("used_backup") else means,
-                                      excluded | (bremoved if self.report.get("used_backup") else set()))
+        lineups, entry_ids = self._entry_lineups(final, bpoints if self.report.get("used_backup") else means,
+                                                 excluded | (bremoved if self.report.get("used_backup") else set()))
         return Decision(final=final, lineups=lineups, rules_lineup=rules_lu, drafts=drafts, report=self.report,
-                        stage_lineups=stage)
+                        stage_lineups=stage, entry_ids=entry_ids)
 
-    def _entry_lineups(self, final: Lineup, points: dict[str, float], excluded: set[str]) -> list[Lineup]:
-        """One lineup per entry row (portfolio for multi-entry); entries with locked cells keep them."""
+    def _entry_lineups(self, final: Lineup, points: dict[str, float],
+                       excluded: set[str]) -> tuple[list[Lineup], list[str] | None]:
+        """One lineup per entry row (portfolio for multi-entry); locked and started cells stay put.
+        Entries for which no legal lineup exists any more are left out of the file (and reported)."""
         entries = self.c.entries
         if not entries:
-            return [final]
+            return [final], None
         from dfs.pipeline import entry_lock_groups
-        groups = entry_lock_groups(self.c)
+        groups = entry_lock_groups(self.c, self.now)
         out: list[Lineup | None] = [None] * len(entries)
+        unsolvable: list[str] = []
         for locks, idx in groups.items():
-            if not locks and len(idx) == 1:
-                out[idx[0]] = final
+            if dict(locks) == self._fallback_locks or (not locks and not self._fallback_locks):
+                if len(idx) == 1:
+                    out[idx[0]] = final
+                    continue
+            try:
+                _, res = self._choose(points, excluded, "final", n=len(idx), slot_locks=dict(locks))
+            except Infeasible:
+                unsolvable += [entries[i].entry_id for i in idx]
                 continue
-            _, res = self._choose(points, excluded, "final", n=len(idx), slot_locks=dict(locks))
             lus = res["lineups"]
-            if not locks:
+            if dict(locks) == self._fallback_locks:
                 lus = [final] + [lu for lu in lus if lu.player_keys != final.player_keys]
             for j, i in enumerate(idx):
                 out[i] = lus[j % len(lus)]
-        self.report["entries"] = {"n": len(entries), "lock_groups": len(groups)}
-        return [lu for lu in out if lu is not None]
+        self.report["entries"] = {"n": len(entries), "lock_groups": len(groups),
+                                  "left_unchanged_no_legal_lineup": unsolvable}
+        keep = [i for i, lu in enumerate(out) if lu is not None]
+        if not keep:
+            raise Infeasible("no entry can be given a legal lineup from the players still available")
+        return [out[i] for i in keep], [entries[i].entry_id for i in keep]
 
     # ------------------------------------------------------------------ report
     def markdown(self, d: Decision, timing: dict, llm: dict) -> str:

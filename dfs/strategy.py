@@ -18,7 +18,7 @@ import numpy as np
 from dfs import select as sx
 from dfs.field import FieldModel, build_field
 from dfs.models import Contest, ContestKind, Lineup, Projection, UserRules
-from dfs.optimize.ilp import Infeasible, SolveOptions
+from dfs.optimize.ilp import Infeasible, SolveOptions, validate_rules
 from dfs.sim import simulate
 
 
@@ -47,6 +47,8 @@ def field_for(contest: Contest, proj: dict[str, Projection], *, kind: ContestKin
 
 def _base(exclude: set[str], user_rules: UserRules | None, slot_locks: dict[int, str] | None,
           contest: Contest) -> SolveOptions:
+    if user_rules is not None:
+        validate_rules(contest, user_rules)  # a bad name or team is reported as such, not as "infeasible"
     locks = dict(slot_locks or {})
     lock_keys: set[str] = set()
     if locks:  # locked cells also pin the player, so dominance pruning can never drop him

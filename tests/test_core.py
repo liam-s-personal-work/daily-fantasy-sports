@@ -13,7 +13,7 @@ import pytest
 from dfs.distributions import (mixture_mean, played_mean, played_sd, quantiles_from_mean_sd,
                                sample_from_uniform)
 from dfs.io.contest_file import ContestFileError, load_contest, norm_name, player_key
-from dfs.io.upload import UploadError, upload_rows
+from dfs.io.upload import UploadError, upload_rows, write_upload
 from dfs.models import Lineup
 from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, solve, solve_many
 from dfs.rules import load_rules, registry_keys
@@ -353,3 +353,129 @@ def test_fd_entries_upload_header():
     rows = upload_rows(c, [lu])
     assert rows[0][:4] == ["entry_id", "contest_id", "contest_name", "entry_fee"]
     assert rows[1][:2] == ["3670015043", "140001-279208572"] and all("-" in x for x in rows[1][4:])
+
+
+# --------------------------------------------------------------------------- review regressions
+
+DK_HEAD = "Position,Name + ID,Name,ID,Roster Position,Salary,Game Info,TeamAbbrev,AvgPointsPerGame\n"
+
+
+def _dk_file(tmp_path, rows, name="DKSalaries.csv", encoding="utf-8"):
+    p = tmp_path / name
+    p.write_text(DK_HEAD + "".join(",".join(map(str, r)) + "\n" for r in rows), encoding=encoding)
+    return p
+
+
+def test_nhl_defensemen_are_separate_players(tmp_path):
+    rows, pid = [], 60000000
+    for team, opp, home in (("COL", "DAL", False), ("DAL", "COL", True), ("NJD", "NYR", False), ("NYR", "NJD", True)):
+        g = f"{team}@{opp}" if not home else f"{opp}@{team}"
+        for pos, roster, n in (("C", "C/UTIL", 2), ("LW", "W/UTIL", 2), ("RW", "W/UTIL", 1), ("D", "D/UTIL", 3), ("G", "G", 1)):
+            for i in range(n):
+                pid += 1
+                rows.append([pos, f"{team} {pos}{i} ({pid})", f"{team} {pos}{i}", pid, roster, 3000 + 100 * i, f"{g} 10/25/2026 07:00PM ET", team, 5])
+    c = load_contest(_dk_file(tmp_path, rows))
+    assert c.rules.sport == "nhl"
+    d_keys = {k for k, p in c.players.items() if p.positions == ["D"]}
+    assert len(d_keys) == 12 and not any("|dst|" in k for k in d_keys)
+    pts = {k: 10.0 + (3 if p.positions == ["D"] and p.team == "COL" else 0) for k, p in c.players.items()}
+    lu = solve(c, pts)
+    assert check_legal(c, lu) == []
+    assert sum(1 for s in lu.slots if c.players[s.player_key].team == "COL" and s.slot == "D") == 2  # two COL D
+
+
+def test_nascar_and_cfb_detection(tmp_path):
+    drivers = [["D", f"Driver {i} ({70000000 + i})", f"Driver {i}", 70000000 + i, "D", 7000 + 100 * i,
+                "Race 10/25/2026 03:00PM ET", f"T{i % 5}", 40] for i in range(12)]
+    c = load_contest(_dk_file(tmp_path, drivers, "nascar.csv"))
+    assert c.rules.sport == "nascar" and len(c.players) == 12
+    # a college showdown between schools whose codes are also NFL codes (no K/DST/TE rows)
+    sd = []
+    for i, (pos, team) in enumerate([("QB", "CIN"), ("RB", "CIN"), ("WR", "CIN"), ("QB", "HOU"), ("RB", "HOU"), ("WR", "HOU")]):
+        for slot, mult in (("CPT", 1.5), ("FLEX", 1.0)):
+            pid = 80000000 + 2 * i + (slot == "CPT")
+            sd.append([pos, f"{team} {pos} ({pid})", f"{team} {pos}", pid, slot, int(5000 * mult), "CIN@HOU 10/24/2026 07:00PM ET", team, 10])
+    c = load_contest(_dk_file(tmp_path, sd, "cfb_sd.csv"))
+    assert c.rules.sport == "cfb" and c.rules.game_type == "showdown"
+
+
+def test_excel_saved_file_reads(tmp_path):
+    rows = [["G", f"Rasmus H{chr(248)}jgaard ({90000000 + i})", f"Rasmus H{chr(248)}jgaard{i}", 90000000 + i, "G",
+             7000 + 100 * i, "Hero World Challenge", "Golf", 60] for i in range(8)]
+    c = load_contest(_dk_file(tmp_path, rows, "pga_cp1252.csv", encoding="cp1252"))
+    assert c.rules.sport == "pga" and any("ø" in p.name for p in c.players.values())
+
+
+def test_in_progress_games_are_started(tmp_path):
+    from dfs.io.contest_file import STARTED_AT
+    text = (FIX / "dk_entries_classic.csv").read_text(encoding="utf-8-sig")
+    text = text.replace("BUF@MIA 10/25/2026 01:00PM ET", "In Progress").replace("KC@LV 10/25/2026 01:00PM ET", "Final")
+    p = tmp_path / "DKEntries_live.csv"
+    p.write_text(text, encoding="utf-8")
+    c = load_contest(p)
+    assert c.games == ["SEA@LAR"]
+    buf = [x for x in c.players.values() if x.team == "BUF"]
+    assert buf and all(x.start_time == STARTED_AT and x.game == "LIVE:BUF" for x in buf)
+    assert any("in progress" in w for w in c.warnings)
+
+
+def test_failed_upload_keeps_the_previous_file(tmp_path):
+    c = load_contest(FIX / "dk_entries_classic.csv")
+    locked_key = next(x.player_key for x in c.candidates if x.site_id == c.entries[0].current[0])
+    pts = {k: (p.site_avg or 0) for k, p in c.players.items()}
+    good = solve(c, pts, SolveOptions(lock_keys={locked_key}))
+    path = write_upload(c, [good], tmp_path / "upload.csv", only_changed=False)
+    before = path.read_text()
+    bad = solve(c, pts, SolveOptions(exclude_keys={locked_key}))
+    with pytest.raises(UploadError):
+        write_upload(c, [bad], path, only_changed=False)
+    assert path.read_text() == before
+
+
+def test_dk_mlb_caps_hitters_per_team(tmp_path):
+    rows, pid = [], 61000000
+    teams = [("NYY", "BOS", False), ("BOS", "NYY", True), ("LAD", "SF", False), ("SF", "LAD", True)]
+    for team, opp, home in teams:
+        g = f"{team}@{opp}" if not home else f"{opp}@{team}"
+        for pos, roster, n in (("SP", "P", 2), ("C", "C", 1), ("1B", "1B", 1), ("2B", "2B", 1), ("3B", "3B", 1),
+                               ("SS", "SS", 1), ("OF", "OF", 3)):
+            for i in range(n):
+                pid += 1
+                rows.append([pos, f"{team} {pos}{i} ({pid})", f"{team} {pos}{i}", pid, roster, 4000,
+                             f"{g} 10/25/2026 07:05PM ET", team, 8])
+    c = load_contest(_dk_file(tmp_path, rows, "mlb.csv"))
+    assert c.rules.sport == "mlb" and c.rules.max_hitters_per_team == 5
+    pts = {k: (30.0 if p.team == "NYY" else 5.0) for k, p in c.players.items()}
+    lu = solve(c, pts)
+    nyy_hitters = sum(1 for s in lu.slots if c.players[s.player_key].team == "NYY" and s.slot != "P")
+    assert nyy_hitters == 5 and check_legal(c, lu) == []
+    nyy = [k for k, p in c.players.items() if p.team == "NYY" and p.positions[0] != "SP"]
+    unlimited = c.model_copy(update={"rules": c.rules.model_copy(update={"max_hitters_per_team": None})})
+    six = solve(unlimited, pts)
+    assert sum(1 for s in six.slots if s.player_key in nyy) > 5
+    assert any("hitters" in x for x in check_legal(c, six))
+
+
+def test_rule_names_teams_and_games_are_strict():
+    from dfs.models import UserRules
+    from dfs.optimize.ilp import RuleError, validate_rules
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+    pts = {k: (p.site_avg or 0) for k, p in c.players.items()}
+    # alias: nflverse/FD 'LA' means the DK file's 'LAR'
+    lu = solve(c, pts, SolveOptions(user_rules=UserRules(exclude_teams=["LA"])))
+    assert not any(c.players[s.player_key].team == "LAR" for s in lu.slots)
+    with pytest.raises(RuleError, match="not in this contest"):
+        validate_rules(c, UserRules(exclude_teams=["NYJ"]))
+    with pytest.raises(RuleError, match="AWAY@HOME|not in this contest"):
+        validate_rules(c, UserRules(exclude_games=["MIA@BUF"]))
+    with pytest.raises(RuleError, match="unknown player"):
+        validate_rules(c, UserRules(lock=["Nobody Atall"]))
+    # two players sharing a display name on different teams must be told apart
+    p0 = next(p for p in c.players.values() if p.positions == ["WR"])
+    other = next(p for p in c.players.values() if p.positions == ["WR"] and p.team != p0.team)
+    twin_key = f"{other.team}|{norm_name(p0.name)}|WR"
+    twin = other.model_copy(update={"key": twin_key, "name": p0.name})
+    c2 = c.model_copy(update={"players": {**c.players, twin_key: twin}})
+    with pytest.raises(RuleError, match="more than one player"):
+        validate_rules(c2, UserRules(lock=[p0.name]))
+    validate_rules(c2, UserRules(lock=[f"{p0.name} ({p0.team})"]))

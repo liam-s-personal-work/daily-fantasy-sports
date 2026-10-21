@@ -222,3 +222,60 @@ def test_lastcall_reforecast_keeps_the_blind(cfg):
     assert "$7,800" in (res.run_dir / "dossiers.json").read_text()  # the leak is in the research...
     assert not any("$7,800" in x or "salary" in x for x in prompts)  # ...but never reaches the forecaster
     assert any("named the slot starter" in x for x in prompts)
+
+
+ET_ = timezone(timedelta(hours=-4))  # EDT on 2026-10-25
+
+
+def _cells(path):
+    rows = list(csv.reader(open(path)))
+    return {r[0]: r[4:13] for r in rows[1:]}
+
+
+def test_late_swap_run_keeps_started_cells_in_every_entry(cfg):
+    now = datetime(2026, 10, 25, 13, 30, tzinfo=ET_)  # the 1 PM games are on, SEA@LAR (4:25) is not
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None, now=now)
+    c = res.contest
+    live = {x.site_id for x in c.candidates if c.players[x.player_key].start_time <= now}
+    for name in ("upload.csv", "upload_safety.csv"):
+        new = _cells(res.run_dir / name)
+        for e in c.entries:
+            if e.entry_id not in new:
+                continue
+            for was, now_id in zip(e.current, new[e.entry_id]):
+                if was in live:
+                    assert now_id == was, (name, e.entry_id)  # a started player is never moved or dropped
+                else:
+                    assert now_id not in live or now_id == was  # and never added
+
+
+def test_late_swap_with_one_game_left_builds_around_locks(cfg, tmp_path):
+    text = (FIX / "dk_entries_classic.csv").read_text(encoding="utf-8-sig")
+    text = text.replace("BUF@MIA 10/25/2026 01:00PM ET", "In Progress").replace("KC@LV 10/25/2026 01:00PM ET", "Final")
+    p = tmp_path / "DKEntries_live.csv"
+    p.write_text(text, encoding="utf-8")
+    now = datetime(2026, 10, 25, 15, 0, tzinfo=ET_)
+    res = run(p, cfg, backend=fake(), log=lambda s: None, now=now)  # min 2 games but only SEA@LAR is open
+    assert check_legal(res.contest, res.final) == []
+    assert res.report["decision"].get("built_around_locks")
+    new = _cells(res.upload_path)
+    for e in res.contest.entries:
+        if e.entry_id in new:
+            for was, now_id in zip(e.current, new[e.entry_id]):
+                p_was = next((x for x in res.contest.candidates if x.site_id == was), None)
+                if p_was and res.contest.players[p_was.player_key].game != "SEA@LAR":
+                    assert now_id == was
+
+
+def test_lastcall_keeps_a_started_pick_that_news_calls_out(cfg):
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    starts = sorted({p.start_time for p in res.contest.players.values() if p.start_time})
+    mid = starts[0] + timedelta(minutes=30)
+    started_pick = next((k for k in res.final.player_keys if res.contest.players[k].start_time <= mid), None)
+    if started_pick is None:
+        pytest.skip("fixture lineup has no early-game player")
+    name = res.contest.players[started_pick].name
+    news = lambda t: {"updates": [{"player": name, "status": "out", "text": "left the game, ruled out"}]}
+    out = lastcall(res.run_dir, web=True, now=mid, backend=fake(news=news), log=lambda s: None)
+    assert started_pick in out["final"].player_keys and started_pick in out["out_but_locked"]
+    assert check_legal(res.contest, out["final"]) == []

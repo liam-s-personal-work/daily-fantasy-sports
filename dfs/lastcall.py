@@ -105,10 +105,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
                                    c.players, "nfl", learned=blend_mod.load_learned(cfg.get("learned_blend")),
                                    calib=blend_mod.load_calibration(cfg.get("calibration")))
             proj.update(newp)
-    for k in out:  # an inactive player is not scored at zero: he is removed
-        proj.pop(k, None)
-
-    # 3. late swap: players whose games have started stay in their slots
+    # 3. late swap: players whose games have started stay in their slots, even if news calls them out
     def has_started(k: str) -> bool:
         t = c.players[k].start_time
         return bool(t and t <= now)
@@ -119,18 +116,21 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     started_all = {k for k in c.players if has_started(k)}
     locked = {s.player_key for s in final.slots if has_started(s.player_key)}
     started = started_all - locked
+    swap_out = out - started_all  # ruled out and still replaceable
+    for k in swap_out:  # an inactive player is not scored at zero: he is removed
+        proj.pop(k, None)
     keys, sims = simulate(proj, c.players, c.rules.sport, n_sims=int(cfg.get("n_sims", 10000)),
                           seed=int(cfg.get("seed", 11)))
     fm = strategy.field_for(c, proj, kind=c.kind, seed=int(cfg.get("seed", 11)))
     target = float(cfg.get("target_top", 0.023))
     metric = "p_cash" if c.kind.value == "cash" else "p_top"
 
-    current_ok = not (set(picks) & out)
+    current_ok = not (set(final.player_keys) & swap_out)
     cur = final.model_copy(deep=True)
     if current_ok:
         strategy.evaluate([cur], keys, sims, fm, target)
     res = strategy.best_lineups(c, proj, keys, sims, fm, kind=c.kind, target_top=float(cfg.get("target_top", 0.023)),
-                                exclude=started | out, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
+                                exclude=started | swap_out, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
     new = res["lineups"][0]
 
     lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
@@ -152,7 +152,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         if lu.player_keys == final.player_keys:
             final_lus.append(chosen)
             continue
-        bad = set(lu.player_keys) & out
+        bad = set(lu.player_keys) & swap_out
         if not bad:
             final_lus.append(lu)
             continue
@@ -161,7 +161,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         for lock in (keep, set()):  # smallest change first, then any legal lineup around the started picks
             try:
                 fixed = solve(c, means, SolveOptions(slot_locks=slot_locks(lu), lock_keys=lock - started_all,
-                                                     exclude_keys=(started_all - set(lu.player_keys)) | out,
+                                                     exclude_keys=(started_all - set(lu.player_keys)) | swap_out,
                                                      time_limit_s=10), label=f"entry {i + 1} repaired")
                 break
             except Infeasible:
@@ -172,8 +172,11 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         else:
             repaired += 1
             final_lus.append(fixed)
-    path = write_upload(c, final_lus, run_dir / "upload_final.csv", only_changed=False)
+    from dfs.pipeline import started_ids
+    path = write_upload(c, final_lus, run_dir / "upload_final.csv", only_changed=False,
+                        entry_ids=st["report"].get("entry_ids"), started_ids=started_ids(c, now))
     summary = {"now": now.isoformat(), "news": news, "out": sorted(out), "affected": sorted(affected),
+               "out_but_locked": sorted(out & started_all),
                "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired},
                "reforecast": sorted(refreshed), "locked": sorted(locked), "changed": change,
                "reason": ("a pick is out" if not current_ok else f"new lineup leads by {lead:.1%}" if change
