@@ -1,15 +1,16 @@
-# Gaussian-copula correlations of fantasy-point *surprises* (residuals around each
-# player's projection), by relation and position pair. Projections already carry the
-# shared game environment through team totals, so these sit below published raw
-# fantasy-point correlations (QB-WR1 raw ~0.37-0.54, DST vs opposing offense ~-0.78
-# at the team-points level). `dfs fit-correlations` re-estimates the NFL block from
-# nflverse residuals and writes nfl_fitted; the simulator prefers fitted values.
+# Gaussian-copula correlations between players' fantasy points, by relation and position
+# pair. NFL values follow within-pair DK-scoring correlations re-estimated on nflverse
+# 2021-25 (pooled z-scores; docs/research/projections.md): QB-WR1 .35, QB-WR2 .35,
+# QB-TE1 .28, QB-RB1 .06, WR1-WR2 .02, WR1-RB1 -.02, QB-opp WR1 .12, WR1-opp WR1 .08,
+# QB-opp QB .19. Several widely quoted published values (QB-RB1 .42, WR1-opp WR1 .56)
+# did not reproduce. DST rows are structural priors (a DST scores from the opposing
+# offense's failures).
 nfl:
   same_team:
-    QB-WR: 0.40
-    QB-TE: 0.30
-    QB-RB: 0.10
-    WR-WR: 0.05
+    QB-WR: 0.35
+    QB-TE: 0.28
+    QB-RB: 0.06
+    WR-WR: 0.02
     WR-TE: 0.00
     TE-TE: -0.05
     RB-WR: -0.02
@@ -26,12 +27,12 @@ nfl:
     K-DST: 0.10
     default: 0.0
   opponent:
-    QB-QB: 0.20
-    QB-WR: 0.20
+    QB-QB: 0.19
+    QB-WR: 0.12
     QB-TE: 0.12
     QB-RB: 0.05
-    WR-WR: 0.12
-    WR-TE: 0.08
+    WR-WR: 0.08
+    WR-TE: 0.06
     RB-WR: 0.03
     RB-RB: -0.05
     DST-QB: -0.35
