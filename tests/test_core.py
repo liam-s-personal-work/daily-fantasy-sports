@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import io
 import itertools
 from pathlib import Path
 
@@ -225,7 +224,6 @@ def test_simulation_is_deterministic(toy_contest):
 
 def _brute_force(contest, pts):
     """Exhaustive optimum for tiny slates (checks the CP-SAT model, not its output format)."""
-    from dfs.optimize.ilp import lineup_points
     slots = [s.name for s in contest.rules.slots]
     best = -1e9
     opts = {s: [c for c in contest.candidates if s in c.eligible_slots] for s in set(slots)}
@@ -494,3 +492,31 @@ def test_same_team_jr_and_sr_stay_two_players(tmp_path):
     ids = {x.site_id: x.player_key for x in c.candidates if x.player_key in harrisons}
     assert ids["62000000"] != ids["62000001"]
     assert any("told apart" in w for w in c.warnings)
+
+
+def test_every_scoring_table_parses_and_registry_gaps_are_declared():
+    from dfs import scoring
+    from dfs.scoring import ScoringError
+    for f in sorted((Path(__file__).parents[1] / "dfs" / "rules" / "scoring").glob("*.yaml")):
+        assert scoring.load_table(f.stem)["roles"], f.name
+    for key in registry_keys():
+        r = load_rules(*key.split("."))
+        try:
+            scoring.load_table(r.scoring)
+        except ScoringError:  # allowed only when the registry says so
+            assert any("No scoring table stored yet" in n for n in r.notes), key
+
+
+def test_data_cache_folder_follows_checkout_and_env(monkeypatch, tmp_path):
+    import importlib
+
+    import dfs.data.cfb as cfb
+    import dfs.data.nflverse as nv
+    assert nv.CACHE_DIR == nv.REPO_ROOT / "data" / "cache" / "nflverse"  # a repo checkout keeps its cache in data/cache
+    monkeypatch.setenv("DFS_CACHE_DIR", str(tmp_path))
+    try:
+        assert importlib.reload(nv).CACHE_DIR == tmp_path / "nflverse"
+        assert importlib.reload(cfb).CACHE_DIR == tmp_path / "sportsdataverse"
+    finally:
+        monkeypatch.delenv("DFS_CACHE_DIR")
+        importlib.reload(nv), importlib.reload(cfb)

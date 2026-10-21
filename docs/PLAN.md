@@ -95,12 +95,12 @@ Progress is tracked two ways:
 
 | Your step | Built as | Changed? Why |
 |---|---|---|
-| Read the contest from the entries file and saved rules | `dfs/io/contest_file.py` detects DK salary, entries and template files, and FD player-list and entries-template files. `dfs/rules/registry/contests.yaml` holds the cap, slots, limits and multipliers, each with a confidence level. Late-swap locked cells in an entries file are kept as they are | As specified. Formats were checked against **13 real DK/FD exports** (12 from 2026, one from October 2025; kept locally, not in git). The CSVs never contain the cap or team limits, so those live in the registry and are cross-checked against the file on every run |
+| Read the contest from the entries file and saved rules | `dfs/io/contest_file.py` detects DK salary, entries and template files, and FD player-list and entries-template files. `dfs/rules/registry/contests.yaml` holds the cap, slots, limits and multipliers, each with a confidence level. Late-swap locked cells in an entries file are kept as they are | As specified. Formats were checked against **13 real DK/FD exports** (2024–2026, most from 2026; kept locally, not in git). The CSVs never contain the cap or team limits, so those live in the registry and are cross-checked against the file on every run |
 | Learn the scoring | `dfs/scoring.py` + `dfs/rules/scoring/*.yaml` | Scoring is a stored table, not something an agent "learns" at run time: no tokens and no mistakes. The NFL tables reproduce the season averages printed in real 2026 DK and FD files: all 20 team defenses, and 256 to 257 of 257 matched offensive players. A test also checks three single-player scores quoted from DK articles |
-| Research every game, allowed sites only | One Sonnet agent per game, with web search and a checklist (injury report, practice, role changes, weather, suspensions). It is given the known structured facts (official injury report, depth chart, usage) so it only searches for what is missing. Every fact carries a source, a date and an availability status | Allowed sources are enforced in code (`dfs/sources.py`). Page fetches outside an allow-list are denied by the Agent SDK permission layer. Facts from DFS, pick'em, betting or no-automation sites are dropped, and so are facts dated after the run's time. A "ruled out" claim counts only with a fact that proves it |
+| Research every game, allowed sites only | One Sonnet agent per game, with web search and a checklist (injury report, practice, role changes, weather, suspensions). It is given the known structured facts (official injury report, depth chart, usage) so it only searches for what is missing. Every fact must carry a source URL and an availability status, plus a date when the source gives one | Allowed sources are enforced in code (`dfs/sources.py`). Page fetches outside an allow-list are denied by the Agent SDK permission layer. Facts from DFS, pick'em, betting or no-automation sites are dropped, and so are facts dated after the run's time. A "ruled out" claim counts only with a fact that proves it |
 | Baseline: NFL game logs adjusted by betting lines; college season averages adjusted for workload; remove anyone ruled out | **NFL:** a top-down model. Implied team points give team volume; usage shares and efficiency are shrunk; stat lines are simulated and scored; availability comes from the injury report. **College:** season averages adjusted for recent workload share and the game line | As specified, but point-in-time and as a distribution (p10/p50/p90 plus the chance of not playing). Tuned on 2024–25 only and tested on 2026 (§6.2–6.3) |
 | Fresh forecasts (football), blind to prices, site averages, past scores | One Opus agent per game. Code enforces the blind. The packet has no salary, average or fantasy-point fields, and no research summary or URL. Any fact that mentions prices, lines, odds or fantasy points is dropped. Game-day inactives appear only once they are announced | Betting lines are hidden too. The baseline already uses them, so hiding them keeps the forecast an independent signal. The `market` experiment (§6.4) tested that choice |
-| Blend: NFL 85/15, college 100%, other sports baseline leads | `dfs/blend.py` uses quantile averaging. Your weights are the **priors**; per-position weights learned from graded games replace them as evidence builds, shrunk toward the prior | **Changed by evidence.** On 1,557 graded 2026 player-games (leak-free), a fixed 85% does worse than the baseline alone. The learned per-position weights (0.25–0.72) do best (§6.4) |
+| Blend: NFL 85/15, college 100%, other sports baseline leads | `dfs/blend.py` uses quantile averaging. Your weights are the **priors**; per-position weights learned from graded games replace them as evidence builds, shrunk toward the prior | **Changed by evidence.** On 1,557 graded 2026 player-games (leak-free), a fixed 85% does worse than the baseline alone. The learned per-position weights (0.25–0.72) do best on squared error, measured in-sample; by MAE the baseline alone is slightly better (§6.4) |
 | Three independent drafts | The solver builds three drafts from the blended numbers: a cash lens (floor), a tournament lens (P(top x%)) and a leverage lens (least-owned near the best) | Drafts are built by the solver. Three identical deterministic solves would be pointless, and lineups written by an LLM are not reliably legal |
 | Strategist: can't change a number; removes non-players; explains close calls; names the weakest pick; cuts only by citing a fact; solver builds the best legal lineup | Exactly that, with citation checks in code and a **novelty rule**: a cut needs a fact the forecaster had not already priced in, unless the player is a hard out or inactive | The solver's objective is the contest's (tournament or cash), not raw points |
 | Checker attacks every pick; code decides; ≤2 revisions | A fresh Opus checker. Code fails a pick only on a cited blocker about availability or a new role fact; at most 2 revisions | As specified |
@@ -183,7 +183,8 @@ training cutoff, so the forecaster cannot remember the outcomes.
 ### 6.1 Contest files and scoring
 
 - **Real files.** 13 real DK/FD exports parse correctly. They are public files from other people's GitHub
-  repositories: 12 from 2026 and one from October 2025. They are kept locally, not committed. They cover:
+  repositories, mostly from 2026; one is from October 2025 and one (the DK NHL template) from November
+  2024. They are kept locally, not committed. They cover:
   - DK classic, showdown and late-swap entries;
   - DK NBA, NHL and PGA;
   - FD classic and the MVP single-game format;
@@ -225,7 +226,7 @@ The model beats every naive baseline at every position (QB, RB, WR, TE, DST, K):
 
 A review of the baseline found and fixed real defects, each with a regression test. Together they cut
 the QB starting-probability error (Brier score) by about a quarter on 2026 weeks 3–6: 0.017 → 0.013 over
-all 421 QB rows. The fixes were:
+all 421 QB rows (`docs/results/ops_checks.md`). The fixes were:
 
 - the QB start chain;
 - depth-chart-aware availability for starters returning from injury;
@@ -416,7 +417,9 @@ A full main slate is roughly **8–10 minutes and $4–6**, well inside the 60-m
   registry and printed as warnings. Confirm the cap and slots from the contest's rules page once per game
   type.
 - **Other sports.**
-  - NBA, MLB, NHL, golf, MMA and NASCAR run on the site-average baseline plus research. They have no
+  - NBA, MLB, NHL, golf, MMA and NASCAR run on the site-average baseline plus research.
+  - DK soccer, tennis and CS2, and FanDuel golf, have no stored scoring table yet. Runs work from the
+    file's averages, and grading needs the site's standings file. The registry says so per entry. They have no
     stats adapter yet, so expect much weaker projections than in football.
   - FanDuel files carry no kickoff times outside the NFL, so late swap there cannot tell which games have
     started. The engine says so; don't re-upload after the first game starts.

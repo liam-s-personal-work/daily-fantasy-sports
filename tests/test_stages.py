@@ -12,7 +12,7 @@ from dfs.distributions import mixture_mean
 from dfs.grade import grade_lineup, update_blend
 from dfs.llm.backend import AgentResult, AgentTask, FakeBackend, Runner
 from dfs.io.contest_file import norm_name
-from dfs.models import Fact, Forecast, GameDossier, Projection
+from dfs.models import Fact, Forecast, GameDossier
 from dfs.optimize.ilp import solve
 from dfs.providers import GenericProvider
 from dfs.sources import blind_text, host_blocked, require, SourceNotAllowed
@@ -488,3 +488,27 @@ def test_one_team_fact_proves_outs_only_as_an_inactives_list():
 def test_forecaster_does_not_see_unproven_ruled_out_names():
     d = GameDossier(game="A@B", summary="", ruled_out=["Josh Allen"], facts=[])
     assert "Josh Allen" not in agents.blinded_facts_text({"A@B": d})
+
+
+@pytest.mark.parametrize("text", ["The Chiefs are laying 7 at home against Denver", "Buffalo is laying 3.5 on the road",
+                                  "Seattle getting 7 at home", "LA implied for 27", "The line is now Buffalo minus 3"])
+def test_blind_drops_bare_spreads_and_implied_totals(text):
+    assert blind_text(text) is None
+
+
+@pytest.mark.parametrize("text", ["He is getting two more carries a game since the trade",
+                                  "The offensive line is down 2 starters after Jurgens' concussion",
+                                  "The Jets defense is allowing 28 points per game since Sauce Gardner went on IR"])
+def test_blind_keeps_football_facts_with_numbers(text):
+    assert blind_text(text) == text
+
+
+def test_team_fact_counts_only_for_the_players_own_clause():
+    c = _named_contest()
+    g = c.players["BUF|khalil shakir|WR"].game
+    mixed = Fact(id=f"{g}.F1", subject="BUF", team="BUF", kind="injury", status="out", confidence="high",
+                 source_url="https://x.com/a", text="Dalton Kincaid out; Khalil Shakir, inactive in Week 6, is questionable")
+    single = mixed.model_copy(update={"id": f"{g}.F2", "text": "Bills: Khalil Shakir ruled out (ankle)"})
+    for f, want in ((mixed, set()), (single, {"BUF|khalil shakir|WR"})):
+        d = GameDossier(game=g, summary="", ruled_out=["Khalil Shakir"], facts=[f])
+        assert agents.ruled_out_keys(c, {g: d}) == want

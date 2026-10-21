@@ -13,10 +13,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-import numpy as np
 
 from dfs.models import Contest, ContestKind, GameDossier, Lineup, Projection
-from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, lineup_points, solve
+from dfs.optimize.ilp import Infeasible, check_legal
 from dfs.sim import simulate
 from dfs.stages import agents
 from dfs import strategy as sel
@@ -223,10 +222,11 @@ class Decider:
                     from dfs.pipeline import entry_lock_groups
                     locks = next((dict(lk) for lk, idx in entry_lock_groups(c, self.now).items() if 0 in idx), {})
                 rules_lu, _ = self._choose(means, excluded - mine, "your rules", user_rules=cfg.user_rules,
-                                           slot_locks=locks or None)
+                                           slot_locks=locks if c.entries else None)
             except Infeasible as e:
                 self.report["user_rules_error"] = str(e)
                 self.log(f"WARNING: your rules lineup could not be built: {e}")
+        self.report["excluded"] = sorted(excluded | (bremoved if self.report.get("used_backup") else set()))
         legal = check_legal(c, final)
         if legal:
             raise Infeasible(f"final lineup failed the independent legality check: {legal}")

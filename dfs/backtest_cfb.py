@@ -408,7 +408,7 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
              f"({elapsed:.0f}s). Every number below is computed from the sportsdataverse release files; none are typed by hand.", "",
              *_headline(res, a), "",
              "## Protocol", "",
-             f"- Model: `dfs.projections.cfb` (season averages adjusted for recent workload and game environment).",
+             "- Model: `dfs.projections.cfb` (season averages adjusted for recent workload and game environment).",
              f"- Fit: parameters {'grid-searched' if a.fit else 'defaults (from an earlier --fit run)'} and dispersion / p_zero tables fit on "
              f"{a.fit_season} weeks {a.fit_weeks} with {a.fit_season - 1} as the prior season.",
              f"- Test: {a.test_season} weeks {a.test_weeks}, prior season {a.test_season - 1}; out of sample. Each week is projected "

@@ -217,8 +217,8 @@ def parse_research(results: list[AgentResult], now: datetime | None = None) -> d
         o = r.output
         facts = []
         for i, f in enumerate(o.get("facts", []), 1):
-            if not (f.get("source_url") or "").strip():
-                continue  # every fact must be cited
+            if not re.match(r"https?://\S+", (f.get("source_url") or "").strip()):
+                continue  # every fact must be cited with a URL
             if host_blocked(f.get("source_url")):
                 continue  # never carry facts lifted from DFS sites or no-automation sources
             if _after(f.get("as_of"), now):
@@ -335,12 +335,22 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
 def _names_player(f: Fact, key: str, contest: Contest) -> bool:
     """For inactive lists: a fact whose subject lists several players ('A / B / C') or the team, and
     whose text names this player in full."""
-    if (f.status or "").lower() not in ("inactive", "out") or not re.search(r"inactive", f.text or "", re.I):
-        return False  # only an inactives list, whose every name is out, can speak for several players
+    if (f.status or "").lower() not in OUT_STATUSES:
+        return False
     n = key_name(key, contest)
-    if n in {_subject_name(x) for x in re.split(r"\s*[/,&]\s*", f.subject or "")}:
-        return True
-    return team_fact(f, contest.players[key].team, contest) and re.search(rf"\b{re.escape(n)}\b", norm_name(f.text or "")) is not None
+    in_subject = n in {_subject_name(x) for x in re.split(r"\s*[/,&]\s*", f.subject or "")}
+    if not in_subject and not team_fact(f, contest.players[key].team, contest):
+        return False
+    # The clause that names him decides: it must not give him a playing status, and either it says he
+    # is out or the whole fact is an inactives list (every name on it is out).
+    clause = next((cl for cl in re.split(r"[;.\n]", f.text or "") if re.search(rf"\b{re.escape(n)}\b", norm_name(cl))), None)
+    if clause is None:
+        return in_subject and bool(re.search(r"\binactives?\b", f.text or "", re.I))
+    if re.search(r"questionable|doubtful|probable|limited|game[- ]time|full participant|will play|expected to play|"
+                 r"(?<!in)active\b", clause, re.I):
+        return False
+    return bool(OUT_WORDS.search(clause) or re.search(r"\bout\b|\binactives?\b", clause, re.I)
+                or re.search(r"\binactives?\b", f.text or "", re.I))
 
 
 def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[str]:

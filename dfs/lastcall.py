@@ -79,21 +79,31 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     # says otherwise. Then each entry starts from the site's lineup, and the site's LOCKED cells stay put.
     fresh: dict = {}
     site_locked: dict[int, set[int]] = {}
+    gone: set[int] = set()
+    early_warnings: list[str] = []
     rebuild: set[int] = set()  # entries the site holds empty (reservations): built only from players not yet started
-    if entries_file:
+    if entries_file and not c.entries:
+        early_warnings.append("this run was made from a salary file, so --entries is ignored; run on the entries "
+                              "file to manage entries")
+    elif entries_file:
         from dfs.io.contest_file import load_contest
         fresh = {e.entry_id: e for e in load_contest(entries_file).entries}
         for i, eid in enumerate(eids):
             e = fresh.get(eid)
             if e is None:
-                continue  # not in the fresh file: keep the run's lineup
-            if not all(e.current):
+                gone.add(i)  # not on the site any more (withdrawn or cancelled): left out of the file
+                continue
+            if not any(e.current):
                 rebuild.add(i)
                 continue
-            held_lu = _lineup_from_cells(c, e.current)
-            if held_lu is not None:
-                entry_lus[i] = held_lu
-                site_locked[i] = {j for j, lk in enumerate(e.locked) if lk}
+            held_lu = _lineup_from_cells(c, e.current) if all(e.current) else None
+            if held_lu is None:  # partly filled, or holds players this run does not know: left as it is
+                gone.add(i)
+                early_warnings.append(f"entry {eid} is partly filled or holds players this run does not know; "
+                                      "left as it is on the site")
+                continue
+            entry_lus[i] = held_lu
+            site_locked[i] = {j for j, lk in enumerate(e.locked) if lk}
     picks = list(dict.fromkeys(k for lu in [final, *entry_lus] for k in lu.player_keys))
 
     # 1. news on every pick (web) + any outs supplied by a structured refresh
@@ -148,7 +158,9 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         return {i: s.site_id for i, s in enumerate(lu.slots) if has_started(s.player_key) or i in locked_cells}
 
     started_all = {k for k in c.players if has_started(k)}
-    warnings: list[str] = []
+    warnings: list[str] = list(early_warnings)
+    for w in early_warnings:
+        log(f"WARNING: {w}")
     no_time = sorted(c.players[k].name for k in picks if c.players[k].start_time is None)
     if no_time and c.rules.late_swap:
         warnings.append(f"kickoff times unknown for {len(no_time)} picks ({', '.join(no_time[:5])}...): started players "
@@ -157,6 +169,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     locked = {s.player_key for s in final.slots if has_started(s.player_key)}
     started = started_all - locked
     swap_out = out - started_all  # ruled out and still replaceable
+    run_excl = set(st["report"].get("decision", {}).get("excluded") or []) - started_all  # the run's verified removals
     for k in swap_out:  # an inactive player is not scored at zero: he is removed
         proj.pop(k, None)
     keys, sims = simulate(proj, c.players, c.rules.sport, n_sims=int(cfg.get("n_sims", 10000)),
@@ -170,7 +183,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     if current_ok:
         strategy.evaluate([cur], keys, sims, fm, target)
     res = strategy.best_lineups(c, proj, keys, sims, fm, kind=c.kind, target_top=float(cfg.get("target_top", 0.023)),
-                                exclude=started | swap_out, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
+                                exclude=started | swap_out | run_excl, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
     new = res["lineups"][0]
 
     lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
@@ -188,15 +201,31 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     #    repaired only if a pick is out (their own locked cells and started players stay put)
     means = {k: p.mean for k, p in proj.items()}
     repaired, unrepaired, left_empty, final_lus, final_eids = 0, [], [], [], []
+    from dfs.io.contest_file import contest_kind
+    rebuild = {i for i in rebuild if set(entry_lus[i].player_keys) & started_all}  # a fully open plan is entered as is
+    rgroups: dict = {}
+    for i in sorted(rebuild):
+        e = fresh.get(eids[i])
+        rgroups.setdefault(contest_kind([e.contest_name]) if e else c.kind, []).append(i)
+    rebuilt: dict[int, Lineup] = {}
+    for kind, idx in rgroups.items():
+        try:
+            r = strategy.best_lineups(c, proj, keys, sims, strategy.field_for(c, proj, kind=kind, seed=int(cfg.get("seed", 11))),
+                                      kind=kind, target_top=target, n=len(idx), exclude=started_all | swap_out | run_excl,
+                                      seed=int(cfg.get("seed", 11)))
+            for j, i in enumerate(idx):
+                rebuilt[i] = r["lineups"][j % len(r["lineups"])]
+        except Infeasible:
+            pass
     for i, lu in enumerate(entry_lus):
         eid = eids[i] if i < len(eids) else None
+        if i in gone:
+            continue
         if i in rebuild:  # an empty reservation after kickoff: only players whose games have not started
-            try:
-                lu_new = solve(c, means, SolveOptions(exclude_keys=started_all | swap_out, time_limit_s=10),
-                               label=f"entry {i + 1} (reservation)")
-                final_lus.append(lu_new)
+            if i in rebuilt:
+                final_lus.append(rebuilt[i])
                 final_eids.append(eid)
-            except Infeasible:
+            else:
                 left_empty.append(eid)  # no legal lineup from the open games: left as it is on the site
             continue
         final_eids.append(eid)
@@ -213,7 +242,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
             try:
                 fixed = solve(c, means, SolveOptions(slot_locks=slot_locks(lu, site_locked.get(i, set())),
                                                      lock_keys=lock - started_all,
-                                                     exclude_keys=(started_all - set(lu.player_keys)) | swap_out,
+                                                     exclude_keys=(started_all - set(lu.player_keys)) | swap_out | (run_excl - set(lu.player_keys)),
                                                      time_limit_s=10), label=f"entry {i + 1} repaired")
                 break
             except Infeasible:
@@ -224,6 +253,9 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         else:
             repaired += 1
             final_lus.append(fixed)
+    if gone:
+        warnings.append(f"entries not in the fresh entries file, left out: {', '.join(eids[i] for i in sorted(gone))}")
+        log(f"WARNING: {warnings[-1]}")
     from dfs.pipeline import started_ids
     # Check the new file against what the site holds now: the run's own upload (assumed entered), or
     # a freshly downloaded entries file when one is given (its LOCKED marks are the site's truth).

@@ -19,7 +19,7 @@ from dfs.data import nflverse as nv
 from dfs.data.teams import canonicalize
 from dfs.models import Contest, Fact
 from dfs.projections.nfl import NFLData, project_week
-from dfs.providers import GenericProvider, SlateContext, status_out
+from dfs.providers import GenericProvider, SlateContext
 from dfs.sources import require
 
 _DATA: dict[tuple, NFLData] = {}
@@ -136,8 +136,6 @@ class NFLProvider:
         ko = kickoffs(contest, data, season, week)
         inj = nv.week_injuries(season, week, data.injuries)
         hist = data.player_games[(data.player_games["season"] == season) & (data.player_games["week"] < week)]
-        key_by_gsis = {r["gsis_id"]: r["player_key"] for _, r in mapped.iterrows()
-                       if isinstance(r.get("gsis_id"), str) and r.get("kind") == "player"}
         rows_by_key = {r["player_key"]: r for _, r in mapped.iterrows()}
         market, known, usage, sfacts = {}, {}, {}, {}
         for g in contest.games:

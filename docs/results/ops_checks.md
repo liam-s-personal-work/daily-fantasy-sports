@@ -68,6 +68,15 @@ backups get a quarter of them.
 - **Before the fix.** Every listed depth player got the full role correlation. The raw matrices had smallest
   eigenvalues of −0.75 to −1.03, and the repair shrank QB1–WR1 to about 0.27.
 
+## QB start probability before and after the NFL baseline review
+
+- **Setup.** The pre-merge check recomputed the Brier score of P(QB starts) on 2026 weeks 3–6 with the
+  same frozen nflverse cache. It compared the code before the review fixes (`ac81b2e^`) with the code after
+  them.
+- **Result.** Over all 421 QB rows: 0.0174 → 0.0126, a 28% cut.
+- **Why the backtest report differs.** Its 0.0214 is over the 247 rows where the model gives a
+  probability above zero, so it is not comparable.
+
 ## Candidate pruner
 
 - **Committed test.** `test_pruner_is_exact_on_means_and_draws` checks the pruned solve against the full

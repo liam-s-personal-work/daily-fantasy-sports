@@ -159,9 +159,9 @@ def grade_run(run_dir: Path, standings: str | None = None, update: bool = True,
         if errs:
             from dfs.blend import PRIOR_FORECAST_WEIGHT
             before = json.loads((learned_dir / "blend.json").read_text()) if (learned_dir / "blend.json").exists() else {}
-            st2 = update_blend(learned_dir / "blend.json", c.rules.sport, errs,
-                               prior_weight=PRIOR_FORECAST_WEIGHT.get(c.rules.sport, 0.0), run_id=run_dir.name,
-                               week=(int(base["season"]), int(base["week"])) if base.get("season") and base.get("week") else None)
+            update_blend(learned_dir / "blend.json", c.rules.sport, errs,
+                         prior_weight=PRIOR_FORECAST_WEIGHT.get(c.rules.sport, 0.0), run_id=run_dir.name,
+                         week=(int(base["season"]), int(base["week"])) if base.get("season") and base.get("week") else None)
             if run_dir.name in (before.get("_graded_runs") or []):
                 res["blend_updated_with"] = 0
                 res["notes"] = list(res.get("notes") or []) + ["blend weights already include this run; not counted twice"]

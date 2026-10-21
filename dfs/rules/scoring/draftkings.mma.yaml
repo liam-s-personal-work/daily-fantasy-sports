@@ -3,7 +3,7 @@ site: draftkings
 sport: mma
 version: 2026-10-21
 verified: {status: low, method: "RotoWire review of DK MMA scoring (~2021); not reconfirmed in 2026"}
-sources: [https://www.rotowire.com/mma/article.php?id=54707]
+sources: ["https://www.rotowire.com/mma/article.php?id=54707"]
 role_by_position: {default: fighter}
 roles:
   fighter:

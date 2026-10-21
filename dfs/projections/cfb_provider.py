@@ -31,9 +31,8 @@ import pandas as pd
 
 from dfs.data import cfb as cfbdata
 from dfs.data import cfb_stats as cs
-from dfs.data.cfb_teams import TeamMatchReport, match_slate, split_slate_game
+from dfs.data.cfb_teams import TeamMatchReport, match_slate
 from dfs.distributions import quantiles_from_mean_sd
-from dfs.io.contest_file import norm_name
 from dfs.models import Contest, Fact, Player, Projection
 from dfs.projections import cfb as model
 from dfs.providers import P_ZERO_BY_STATUS, SlateContext, cv_for, status_out
@@ -340,10 +339,6 @@ class CFBProvider:
             by_game_players[contest.players[k].game or "?"].append((k, row))
         for g in contest.games or sorted(by_game_players):
             gid = rep.games.get(g)
-            try:
-                away, home = split_slate_game(g)
-            except ValueError:
-                away, home = g, ""
             gm = tgw[tgw["game_id"] == gid] if gid is not None else tgw.iloc[0:0]
             k_lines, u_lines = [], []
             if len(gm):
@@ -409,7 +404,7 @@ class CFBProvider:
     @staticmethod
     def _usage_line(p: Player, row: pd.Series, L: pd.DataFrame, basis: str = "all") -> str:
         """Blinded usage summary: volume, shares and production counts (no fantasy points, no lines)."""
-        aid, tid = int(row["athlete_id"]), int(row["team_id"])
+        aid = int(row["athlete_id"])
         d = L[(L["athlete_id"] == aid)]
         n = max(len(d), 1)
         per = lambda c: max(float(d[c].sum()) / n, 0.0)

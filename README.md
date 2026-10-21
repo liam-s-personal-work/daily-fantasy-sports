@@ -15,7 +15,8 @@ pip install -e ".[data,agents,dev]"     # Python 3.11+
 ```
 
 Install it editable (`-e`), as above. The learned blend weights in `data/learned/` and the data caches live
-in the repo folder, so a plain `pip install .` runs on the priors and says so.
+in the repo folder, so a plain `pip install .` runs on the priors and says so. In that case its data cache
+goes to `~/.cache/dfs`; set `DFS_CACHE_DIR` to put it anywhere else.
 
 - `data` pulls in nflverse access.
 - `agents` pulls in the Claude Agent SDK, which needs Claude credentials in the environment.
@@ -81,7 +82,8 @@ One network test also needs a real FD salary file in `data/cache/real_samples/` 
 
 - NFL data: [nflverse](https://github.com/nflverse/nflverse-data), CC-BY-4.0 (FTN charting data
   CC-BY-SA-4.0). The NFL keeps its rights in the underlying data. The derived results in `docs/results/`
-  and `data/learned/` are built from it.
-- College data: [sportsdataverse](https://github.com/sportsdataverse) release files (cfbfastR
-  play-by-play, ESPN-derived box scores, rosters and lines). Used for personal, non-commercial analysis;
-  not redistributed. See `docs/PLAN.md` §5.
+  and `data/learned/` are built from it. Its depth charts are ESPN-derived copies: used for personal,
+  non-commercial analysis and not redistributed.
+- College data: [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) release files,
+  CC-BY-4.0 (cfbfastR play-by-play; ESPN-derived box scores, rosters and lines). Used for personal,
+  non-commercial analysis; not redistributed. See `docs/PLAN.md` §5.

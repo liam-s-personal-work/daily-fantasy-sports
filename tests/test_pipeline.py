@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -349,7 +350,7 @@ def test_backtest_command_passes_its_options(monkeypatch):
     import dfs.backtest as bt
     from dfs.cli import main
     seen = {}
-    monkeypatch.setattr(bt, "main", lambda argv: seen.setdefault("argv", list(argv)) and 0)
+    monkeypatch.setattr(bt, "main", lambda argv, prog=None: seen.setdefault("argv", list(argv)) and 0)
     main(["backtest", "--season", "2026", "--weeks", "3-6"])
     assert seen["argv"] == ["--season", "2026", "--weeks", "3-6"]
 
@@ -400,3 +401,66 @@ def test_lastcall_with_a_fresh_entries_file_starts_from_the_site(cfg, tmp_path):
                 assert now_id == was  # the site's started cells are kept, whatever the run had planned
     assert out["entries"]["could_not_repair"] == []
     assert len(final) >= 2
+
+
+def test_backtest_usage_and_errors(capsys):
+    from dfs.cli import main
+    with pytest.raises(SystemExit):
+        main(["backtest", "--help"])
+    assert "usage: dfs backtest" in capsys.readouterr().out
+    assert main(["backtest", "--params", "/nonexistent/params.json", "--weeks", "6"]) == 2
+    assert "dfs backtest:" in capsys.readouterr().err
+
+
+def _strategist_removes(name):
+    def research(t):
+        g = t.name.split(":", 1)[1]
+        c = load_contest(FIX / "dk_salaries_classic.csv")
+        facts = [{"subject": p.name, "team": p.team, "kind": "status", "status": "out", "text": f"{p.name} ruled out",
+                  "source_url": "https://www.nfl.com/injuries", "as_of": "2026-10-24", "confidence": "high"}
+                 for p in c.players.values() if p.game == g and p.name == name]
+        return {"game": g, "summary": "s", "facts": facts, "ruled_out": [], "doubtful_or_questionable": []}
+
+    def strategist(t):
+        import re as _re
+        fid = _re.search(r"\[(\S+)\] \(status, high\) " + _re.escape(name) + ":", t.prompt)
+        key = next(k for k, p in load_contest(FIX / "dk_salaries_classic.csv").players.items() if p.name == name)
+        return {"remove_not_playing": [{"player_key": key, "fact_ids": [fid.group(1)] if fid else []}], "cuts": [],
+                "close_calls": [], "weakest_pick": {"player_key": "", "why": ""}, "preferred_draft": "B"}
+    return research, strategist
+
+
+def test_lastcall_never_readds_a_player_the_run_removed(cfg):
+    first = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    star = max(first.final.player_keys, key=lambda k: first.projections[k].mean)  # the run's best pick
+    name = first.contest.players[star].name
+    research, strategist = _strategist_removes(name)
+    be = fake(strategist=strategist)
+    be.handlers["research"] = research
+    cfg2 = dataclasses.replace(cfg, out_dir=cfg.out_dir.parent / "runs2")  # fresh model cache
+    res = run(FIX / "dk_salaries_classic.csv", cfg2, backend=be, log=lambda s: None)
+    assert star in res.report["decision"]["excluded"] and star not in res.final.player_keys
+    out = lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc), backend=fake(),
+                   log=lambda s: None, threshold=-1.0)  # threshold -1: take any new lineup
+    assert star not in out["final"].player_keys
+
+
+def test_lastcall_fresh_file_before_kickoff_keeps_the_plan_and_survives_a_missing_entry(cfg, tmp_path):
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    planned = _cells(res.upload_path)
+    lines = (FIX / "dk_entries_classic.csv").read_text(encoding="utf-8-sig").splitlines()
+    fresh = tmp_path / "DKEntries_fresh.csv"  # entry 5300000002 withdrawn; 5300000003 still an empty reservation
+    fresh.write_text("\n".join(",".join([""] * 4 + l.split(",")[4:]) if l.startswith("5300000002,") else l
+                               for l in lines) + "\n", encoding="utf-8")
+    out = lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 11, 0, tzinfo=timezone.utc), backend=fake(),
+                   log=lambda s: None, entries_file=fresh)
+    final = _cells(res.run_dir / "upload_final.csv")
+    assert "5300000002" not in final and any("left out" in w for w in out["warnings"])
+    assert final["5300000003"] == planned["5300000003"]  # before kickoff the planned lineup is entered as is
+
+
+def test_lastcall_entries_on_a_salary_run_is_reported(cfg):
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    out = lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc), backend=fake(),
+                   log=lambda s: None, entries_file=FIX / "dk_entries_classic.csv")
+    assert any("salary file" in w for w in out["warnings"])

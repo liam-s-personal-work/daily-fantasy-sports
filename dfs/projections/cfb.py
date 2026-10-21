@@ -32,7 +32,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field, replace
-from pathlib import Path
 from typing import Iterable, Mapping
 
 import numpy as np
@@ -125,7 +124,7 @@ class CFBData:
     def load(cls, seasons: Iterable[int], max_age_hours: float | None = None, use_derived_cache: bool = True,
              log=None) -> "CFBData":
         seasons = sorted(set(int(s) for s in seasons))
-        L, T, R, TB, PB, SCH, BET, TEAMS, VAL, RAW = [], [], [], [], [], [], [], [], {}, []
+        L, T, R, SCH, BET, TEAMS, VAL, RAW = [], [], [], [], [], [], {}, []
         pbp_lines = []
         for s in seasons:
             sched = cfbdata.load_season("schedules", s, max_age_hours)

@@ -153,6 +153,7 @@ contests:
     slots: [[G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]]]
     scoring: fanduel.pga
     confidence: low
+    notes: ["No scoring table stored yet: projections use the file's site averages, and grading needs the site's standings file."]
   draftkings.mma.classic:
     salary_cap: 50000
     slots: [[F, [F]], [F, [F]], [F, [F]], [F, [F]], [F, [F]], [F, [F]]]
@@ -169,11 +170,13 @@ contests:
     min_teams: 3
     scoring: draftkings.soccer
     confidence: low
+    notes: ["No scoring table stored yet: projections use the file's site averages, and grading needs the site's standings file."]
   draftkings.tennis.classic:
     salary_cap: 50000
     slots: [[P, [P]], [P, [P]], [P, [P]], [P, [P]], [P, [P]], [P, [P]]]
     scoring: draftkings.tennis
     confidence: low
+    notes: ["No scoring table stored yet: projections use the file's site averages, and grading needs the site's standings file."]
   draftkings.cs2.showdown:
     salary_cap: 50000
     slots: [[CPT, [P], 1.5, 1.5], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]]]
@@ -181,3 +184,4 @@ contests:
     multiplier_rows: true
     scoring: draftkings.cs2
     confidence: low
+    notes: ["No scoring table stored yet: projections use the file's site averages, and grading needs the site's standings file."]

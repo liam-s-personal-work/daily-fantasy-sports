@@ -696,8 +696,8 @@ REVIEW_CHANGES = [
 ]
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def main(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    ap = argparse.ArgumentParser(prog=prog, description=__doc__.splitlines()[0])
     ap.add_argument("--season", type=int, default=nv.current_season())
     ap.add_argument("--weeks", default="3-6")
     ap.add_argument("--sims", type=int, default=4000)

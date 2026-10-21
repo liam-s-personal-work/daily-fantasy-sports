@@ -79,6 +79,7 @@ def _lastcall(args) -> int:
     out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web, now=_now(args.now),
                    entries_file=args.entries)
     from dfs.lastcall import load_run
+    from dfs.models import Lineup
     c = load_run(Path(args.run_dir))["contest"]
     if out.get("news_failed"):
         print(f"\nWARNING: the news/inactives check FAILED for {', '.join(out['news_failed'])}; "
@@ -89,6 +90,29 @@ def _lastcall(args) -> int:
     for s in out["final"].slots:
         p = c.players[s.player_key]
         print(f"  {s.slot:<6} {p.name} ({p.team}){'  [locked]' if s.player_key in set(out.get('locked') or []) else ''}")
+    held = {}
+    try:
+        st = load_run(Path(args.run_dir))
+        held = {eid: [s.site_id for s in Lineup.model_validate(lu).slots]
+                for eid, lu in zip(st["report"].get("entry_ids") or [], st["report"].get("lineups") or [])}
+    except Exception:  # the summary below is a convenience; lastcall.json has everything
+        pass
+    if held:
+        import csv as _csv
+        rows = list(_csv.reader(open(out["upload"])))[1:]
+        for r in rows:
+            before = held.get(r[0])
+            n = sum(a != b for a, b in zip(before or [], r[4:])) if before else None
+            print(f"  entry {r[0]}: " + ("unchanged" if n == 0 else f"{n} slot(s) changed" if n else "rebuilt"))
+    e = out.get("entries") or {}
+    for w in out.get("warnings") or []:
+        print(f"WARNING: {w}")
+    if e.get("reservations_left_empty"):
+        print(f"WARNING: empty entries left as they are on the site (no legal lineup from the games not yet "
+              f"started): {', '.join(map(str, e['reservations_left_empty']))}")
+    if e.get("could_not_repair"):
+        print(f"WARNING: entries still holding a ruled-out player (no legal repair): "
+              f"{', '.join(map(str, e['could_not_repair']))}")
     m = out.get("metric")
     if m and out.get("current"):
         print(f"  {m}: current {out['current'].get(m, 0):.4f}, final {(out.get('new') or out['current']).get(m, 0):.4f}")
@@ -113,7 +137,11 @@ def _grade(args) -> int:
 
 def _backtest(args) -> int:
     from dfs.backtest import main as bt_main
-    return bt_main(args.rest)
+    try:
+        return bt_main(args.rest, prog="dfs backtest")
+    except (FileNotFoundError, ValueError, KeyError) as e:
+        print(f"dfs backtest: {e}", file=sys.stderr)
+        return 2
 
 
 def main(argv: list[str] | None = None) -> int:

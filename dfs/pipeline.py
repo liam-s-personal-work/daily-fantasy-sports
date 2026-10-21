@@ -33,7 +33,7 @@ from dfs.io.contest_file import load_contest
 from dfs.io.upload import UploadError, write_upload
 from dfs.llm.backend import Backend, Runner, default_backend
 from dfs.models import Contest, ContestKind, GameDossier, Lineup, Projection, UserRules
-from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, lineup_points, solve
+from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, solve
 from dfs.providers import GenericProvider, SlateContext
 from dfs.stages import agents
 from dfs.stages.decide import Decider
@@ -315,7 +315,9 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     calib = blend_mod.load_calibration(cfg.calibration) if cfg.calibration else {}
     for name, path in (("blend weights", cfg.learned_blend), ("calibration", cfg.calibration)):
         if path and not Path(path).exists():
-            log(f"WARNING: learned {name} file {path} not found (install with pip install -e); using the priors")
+            w = f"learned {name} file {path} not found (install with pip install -e); using the priors"
+            contest.warnings.append(w)
+            log(f"WARNING: {w}")
     season, week = ctx.season or cfg.season, ctx.week or cfg.week
     for name in ("blend weights", "calibration"):
         table = learned if name == "blend weights" else calib
@@ -356,6 +358,7 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
                                         only_changed=False, started_ids=started_ids(contest, t_now))
         except UploadError as e:  # e.g. the first entry's locked cells conflict with your rules
             decision.report["user_rules_error"] = f"rules lineup not written: {e}"
+            decision.rules_lineup = None
             log(f"WARNING: rules lineup not written: {e}")
     report = {
         "contest": {"site": contest.rules.site.value, "sport": sport, "game_type": contest.rules.game_type,

@@ -35,7 +35,10 @@ import pandas as pd
 from dfs.sources import require
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CACHE_DIR = Path(os.environ.get("DFS_CACHE_DIR", REPO_ROOT / "data" / "cache")) / "sportsdataverse"
+# In a repo checkout the cache sits in data/cache; an installed copy uses the user's cache folder.
+_DEFAULT_CACHE = (REPO_ROOT / "data" / "cache" if (REPO_ROOT / "pyproject.toml").exists()
+                  else Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dfs")
+CACHE_DIR = Path(os.environ.get("DFS_CACHE_DIR", _DEFAULT_CACHE)) / "sportsdataverse"
 DEFAULT_MAX_AGE_H = float(os.environ.get("DFS_CFB_MAX_AGE_H", "6"))
 BASE_URL = "https://github.com/sportsdataverse/sportsdataverse-data/releases/download"
 USER_AGENT = "dfs-engine/0.1 (+sportsdataverse release files)"

@@ -17,7 +17,7 @@ REGISTER: dict[str, dict] = {
     "nflverse": {"status": "CONDITIONAL", "terms": "CC-BY-4.0 (FTN data CC-BY-SA-4.0); attribute nflverse; upstream NFL rights "
                  "retained; depth charts are ESPN-derived copies: personal use, no redistribution",
                  "url": "https://github.com/nflverse/nflverse-data"},
-    "sportsdataverse": {"status": "CONDITIONAL", "terms": "pre-built GitHub release files, no scraping; college box scores, "
+    "sportsdataverse": {"status": "CONDITIONAL", "terms": "CC-BY-4.0, attribute sportsdataverse; pre-built GitHub release files, no scraping; college box scores, "
                         "rosters, teams and lines are ESPN-derived copies: personal use, no redistribution; upstream rights retained",
                         "url": "https://github.com/sportsdataverse/sportsdataverse-data/releases"},
     "anthropic_web_search": {"status": "ALLOWED", "terms": "server-side search via Claude; cite sources",
@@ -45,7 +45,8 @@ BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|draftkings\.\w+
                            r"williamhill\.com|pointsbet\.com|bet365\.com|betrivers\.com|fanatics\.com|espnbet\.com|"
                            r"sleeper\.com|dailyfantasyfuel\.com|fantasylabs\.com|establishtherun\.com|stokastic\.com|"
                            r"api\.espn\.com|cdn\.espn\.com|fantasy\.espn\.com)$", re.I)
-BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy-projections)(/|$|-)", re.I)
+BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy-projections|rankings|projections)"
+                           r"(/|$|-)", re.I)
 
 
 # Page fetches agents may make (everything else is denied by the SDK permission layer).
@@ -85,13 +86,14 @@ _LEAKS = [
     re.compile(r"\b(draftkings|fanduel|dk(?! metcalf\b)|fd|prizepicks|underdog)\b", re.I),
     re.compile(r"(avg ?points ?per ?game|site average|points per game average)", re.I),
     # betting markets
-    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied (team )?(total|points?)|implied \d|"
+    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied (team )?(total|points?|score|tally)|implied (to score|for|at)\b|implied \d|"
                r"point total|team total|"
                r"game total|(?<!las )vegas|bettors?|betting|sportsbooks?|oddsmakers?|bookmakers?|books? (have|has|make)|"
-               r"props?\b|(laying|giving|getting) (\d+(\.5)?|one|two|three|four|five|six|seven|a field goal|a touchdown)"
-               r"( and a half)? points?\b|(laying|giving) (a field goal|a touchdown)|"
+               r"props?\b|(laying|giving|getting) (\d{1,2}(\.5)?\b|one|two|three|four|five|six|seven|a field goal|a touchdown)"
+               r"( and a half)?(?! (more |extra |fewer )?(carries|targets|snaps|touches|yards|catches|receptions|rushes|"
+               r"reps|looks|attempts|routes|days|weeks|games)\b)|"
                r"by \d{1,2}(\.5)? points|by \d{1,2}\.5\b|totals?\s*(of|is|at|sits at|:)\s*\d{2}|pick'?em|"
-               r"line (is|of|at|sits)( at)? [a-z]{0,4}\s*[+\-\u2212]?\d|listed at \d{4}\b)", re.I),
+               r"line (is|of|at|sits)( now| at)? ([a-z]{0,4}\s*[+\-\u2212]\d|\d{1,2}\.5\b|([a-z]+ ){0,2}(minus|plus) \d)|listed at \d{4}\b)", re.I),
     re.compile(r"½"),
     re.compile(rf"(?<![\w.]){_SIGN}\d{{3}}\b"),  # American odds
     re.compile(r"\b(favou?rites?|underdogs?|favou?red by|dogs? of|line (moved|movement)|odds)\b", re.I),
@@ -102,7 +104,9 @@ _LEAKS = [
                r"projections?|expected to score|ownership|rostership|\d+(\.\d)?% owned|owned at|chalk|value play|smash|must[- ]start|"
                r"start/sit|start or sit|sleepers?|dfs|gpp|cash games?)\b", re.I),
     re.compile(r"\b(low|mid|high)-end (qb|rb|wr|te)\d\b|\b(qb|rb|wr|te)\d{2}\b|\btop-\d{1,2} (option|play|finish)", re.I),
-    re.compile(r"\b\d{1,2}\.\d{1,2} ((fantasy )?points?|last week)\b|\bpoints? (per|a) game\b", re.I),  # past fantasy scores
+    re.compile(r"\b\d{1,2}\.\d{1,2} ((fantasy )?points?|last week)\b", re.I),  # past fantasy scores
+    re.compile(r"^(?!.*\b(allow\w*|giv\w* up|surrender\w*|concede\w*) \d+(\.\d)? points? (per|a) game\b)"
+               r".*?\bpoints? (per|a) game\b", re.I),  # a player's points per game (not points a defense allows)
 ]
 
 

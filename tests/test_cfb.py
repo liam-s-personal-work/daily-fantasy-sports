@@ -14,7 +14,7 @@ import pytest
 
 from dfs.data import cfb as cfbdata
 from dfs.data import cfb_stats as cs
-from dfs.data.cfb_teams import TeamMatcher, _ordered_abbrev_score, match_slate, norm_code, split_slate_game
+from dfs.data.cfb_teams import _ordered_abbrev_score, match_slate, norm_code, split_slate_game
 from dfs.models import Contest, ContestRules, Player, Slot
 from dfs.projections import cfb as model
 from dfs.scoring import score
