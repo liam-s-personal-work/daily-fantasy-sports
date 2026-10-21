@@ -362,3 +362,43 @@ def test_grading_the_same_run_twice_counts_once(tmp_path):
     a = update_blend(tmp_path / "b.json", "nfl", errs, prior_weight=0.85, run_id="run1")
     b = update_blend(tmp_path / "b.json", "nfl", errs, prior_weight=0.85, run_id="run1")
     assert a["nfl"]["WR"]["n"] == b["nfl"]["WR"]["n"] == 40
+
+
+def test_research_ruled_out_needs_a_proving_fact():
+    c = _named_contest()
+    g = c.players["BUF|josh allen|QB"].game
+    bare = GameDossier(game=g, summary="", facts=[], ruled_out=["Josh Allen"])
+    assert agents.ruled_out_keys(c, {g: bare}) == set()  # a bare name (or injected text) removes nobody
+    proved = bare.model_copy(update={"facts": [Fact(id="F1", subject="Josh Allen", team="BUF", kind="status",
+                                                    text="ruled out (concussion)", confidence="high",
+                                                    source_url="https://www.buffalobills.com/news/x")]})
+    assert agents.ruled_out_keys(c, {g: proved}) == {"BUF|josh allen|QB"}
+
+
+def test_news_from_blocked_sites_is_ignored():
+    c = _named_contest()
+    keys = ["BUF|josh allen|QB", "BUF|khalil shakir|WR"]
+    r = AgentResult(name="news:x", ok=True, output={"updates": [
+        {"player": "Josh Allen", "status": "out", "text": "ruled out", "source_url": "https://sportsbook.fanduel.com/n"},
+        {"player": "Khalil Shakir", "status": "out", "text": "ruled out"}]})
+    news = agents.parse_news([r], c, keys)
+    assert "BUF|josh allen|QB" not in news  # FanDuel is not a source
+    assert news["BUF|khalil shakir|WR"]["status"] == "questionable"  # an unsourced 'out' is not acted on
+
+
+def test_runner_stops_at_the_deadline_and_splits_the_budget():
+    import time as _t
+    seen = []
+
+    class Slow:
+        async def run(self, task):
+            seen.append(task.max_budget_usd)
+            return AgentResult(name=task.name, output={"ok": 1}, ok=True, cost_usd=0.1)
+
+    r = Runner(Slow(), budget_usd=1.0, concurrency=4)
+    t = AgentTask(stage="checker", name="c", system="x", prompt="p", schema={"type": "object"})
+    res = asyncio.run(r.run(t))
+    assert res.ok and seen[0] <= 1.0 / 4 + 1e-9  # one slot's share of what is left
+    r.deadline_at = _t.monotonic() + 5
+    res = asyncio.run(r.run(AgentTask(stage="checker", name="d", system="x", prompt="q", schema={"type": "object"})))
+    assert not res.ok and "deadline" in res.error

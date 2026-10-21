@@ -73,9 +73,13 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
 
     # 1. news on every pick (web) + any outs supplied by a structured refresh
     news: dict[str, dict] = {}
+    news_failed: list[str] = []
     if web:
         results = await runner.run_all(agents.news_tasks(c, picks, now))
         news = agents.parse_news(results, c, picks)
+        news_failed = [r.name.split(":", 1)[1] for r in results if not r.ok]  # games whose news check did not run
+        for g in news_failed:
+            log(f"WARNING: the news and inactives check failed for {g}: re-run the last call, or check by hand")
     out = set(extra_out or set()) | {k for k, u in news.items() if u.get("status") in BAD}
     affected = {k for k, u in news.items() if u.get("status") in CHANGED} | out
 
@@ -176,7 +180,8 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     path = write_upload(c, final_lus, run_dir / "upload_final.csv", only_changed=False,
                         entry_ids=st["report"].get("entry_ids"), started_ids=started_ids(c, now))
     summary = {"now": now.isoformat(), "news": news, "out": sorted(out), "affected": sorted(affected),
-               "out_but_locked": sorted(out & started_all),
+               "out_but_locked": sorted(out & started_all), "news_failed": news_failed,
+               "news_checked": bool(web) and not news_failed,
                "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired},
                "reforecast": sorted(refreshed), "locked": sorted(locked), "changed": change,
                "reason": ("a pick is out" if not current_ok else f"new lineup leads by {lead:.1%}" if change

@@ -113,6 +113,7 @@ class RunConfig:
     forecast_weight_override: float | None = None
     provider: str | None = None  # force "generic" (CSV averages only) instead of the sport's data provider
     allow_lookahead: bool = False  # past-slate runs (now well before the real clock) turn web research off unless set
+    kind: str | None = None  # "cash" or "gpp"; default: from the entries' contest names, else gpp
 
 
 @dataclass
@@ -205,6 +206,8 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     contest = load_contest(contest_path)
     if cfg.field_size:
         contest = contest.model_copy(update={"field_size": cfg.field_size})
+    if cfg.kind:  # salary files never say whether the contest is a cash game or a tournament
+        contest = contest.model_copy(update={"kind": ContestKind(cfg.kind)})
     run_dir = Path(cfg.out_dir) / _run_id(contest)
     run_dir.mkdir(parents=True, exist_ok=True)
     for w in contest.warnings:
@@ -222,11 +225,20 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
     runner = Runner(backend or default_backend(), cache_dir=Path(cfg.out_dir) / "cache" / "llm",
                     budget_usd=cfg.budget_usd, concurrency=cfg.concurrency, replay_only=cfg.replay_only, log=log)
+    # Agents must finish with time to spare for the solver and the files (about 4 minutes on a main slate).
+    runner.deadline_at = clock.t0 + clock.deadline - min(240.0, 0.3 * clock.deadline)
     sport = contest.rules.sport
 
     # 2. baseline + structured facts
     provider = provider_for(contest, cfg)
-    ctx: SlateContext = provider.prepare(contest, now=now)
+    try:
+        ctx: SlateContext = provider.prepare(contest, now=now)
+    except (ValueError, KeyError, OSError) as e:  # e.g. the slate's games are not in the stats schedule
+        if isinstance(provider, GenericProvider):
+            raise
+        log(f"WARNING: {type(provider).__name__} failed ({e}); using the site averages in the file instead")
+        contest.warnings.append(f"stats baseline unavailable ({e}); site-average baseline used")
+        ctx = GenericProvider().prepare(contest, now=now)
     _save(run_dir, "baseline.json", {"source": ctx.data_source, "notes": ctx.notes, "season": ctx.season,
                                      "week": ctx.week, "ids": ctx.ids, "ruled_out": ctx.ruled_out,
                                      "projections": ctx.baseline, "market": ctx.market, "usage": ctx.usage})

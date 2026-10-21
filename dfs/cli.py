@@ -61,7 +61,8 @@ def _run(args) -> int:
     cfg = RunConfig(out_dir=Path(args.out), budget_usd=args.budget, deadline_min=args.deadline,
                     web_research=not args.no_web, forecaster=not args.no_forecast, n_sims=args.sims,
                     target_top=args.target_top, field_size=args.field_size, user_rules=_user_rules(args.rules),
-                    season=args.season, week=args.week, replay_only=args.replay, allow_lookahead=args.allow_lookahead)
+                    season=args.season, week=args.week, replay_only=args.replay, allow_lookahead=args.allow_lookahead,
+                    kind=args.kind, provider=args.provider)
     res = run(args.file, cfg, now=_now(args.now))
     print(f"\nupload file: {res.upload_path}")
     if res.rules_upload_path:
@@ -75,6 +76,9 @@ def _lastcall(args) -> int:
     out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web, now=_now(args.now))
     from dfs.lastcall import load_run
     c = load_run(Path(args.run_dir))["contest"]
+    if out.get("news_failed"):
+        print(f"\nWARNING: the news/inactives check FAILED for {', '.join(out['news_failed'])}; "
+              "those picks were not checked")
     print(f"\n{'CHANGED' if out['changed'] else 'unchanged'}: {out['reason']}")
     for k, u in (out.get("news") or {}).items():
         print(f"  news  {c.players[k].name}: {u.get('status')}: {u.get('text', '')[:140]}")
@@ -86,7 +90,7 @@ def _lastcall(args) -> int:
         print(f"  {m}: current {out['current'].get(m, 0):.4f}, final {(out.get('new') or out['current']).get(m, 0):.4f}")
     print(f"upload file: {out['upload']}  (model spend ${out['llm'].get('cost_usd', 0):.2f}, "
           f"{out['llm'].get('web_searches', 0)} searches; details in lastcall.json)")
-    return 0
+    return 3 if out.get("news_failed") and not out.get("news") else 0
 
 
 def _windows(args) -> int:
@@ -130,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--season", type=int); s.add_argument("--week", type=int)
     s.add_argument("--replay", action="store_true", help="answer model stages from cache only")
     s.add_argument("--now", help="ISO time to run as (e.g. 2026-10-18T16:00:00+00:00); default: the real time")
+    s.add_argument("--kind", choices=["cash", "gpp"],
+                   help="contest type (salary files do not say; entries files are read from contest names)")
+    s.add_argument("--provider", choices=["generic"], help="use the file's site averages instead of the stats baseline")
     s.add_argument("--allow-lookahead", action="store_true",
                    help="with --now in the past, still search the web (it will see the games' results)")
     s.set_defaults(fn=_run)
@@ -148,11 +155,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
     from dfs.io.contest_file import ContestFileError
+    from dfs.io.upload import UploadError
     from dfs.optimize.ilp import Infeasible
     from dfs.pipeline import SlateStarted
     try:
         return args.fn(args)
-    except (SlateStarted, Infeasible, ContestFileError, FileNotFoundError) as e:
+    except (SlateStarted, Infeasible, ContestFileError, FileNotFoundError, UploadError, ValueError) as e:
         print(f"dfs {args.cmd}: {e}", file=sys.stderr)
         return 2
 

@@ -99,7 +99,7 @@ def test_lastcall_swaps_only_when_a_pick_is_out(cfg):
     assert quiet["changed"] is False
     victim = res.final.slots[3].player_key
     name = res.contest.players[victim].name
-    news = lambda t: {"updates": [{"player": name, "status": "inactive", "text": f"{name} inactive"}]}
+    news = lambda t: {"updates": [{"player": name, "status": "inactive", "text": f"{name} inactive", "source_url": "https://www.nfl.com/news/inactives"}]}
     loud = lastcall(res.run_dir, web=True, now=early, backend=fake(news=news), log=lambda s: None)
     assert loud["changed"] is True and victim not in loud["final"].player_keys
     assert check_legal(res.contest, loud["final"]) == []
@@ -115,7 +115,7 @@ def test_lastcall_keeps_started_players(cfg):
     if victim is None:
         pytest.skip("fixture lineup has no late-game player")
     name = res.contest.players[victim].name
-    news = lambda t: {"updates": [{"player": name, "status": "out", "text": "out"}]}
+    news = lambda t: {"updates": [{"player": name, "status": "out", "text": "out", "source_url": "https://www.nfl.com/news/inactives"}]}
     out = lastcall(res.run_dir, web=True, now=mid, backend=fake(news=news), log=lambda s: None)
     assert started_picks <= set(out["final"].player_keys)
     assert victim not in out["final"].player_keys
@@ -175,7 +175,7 @@ def test_lastcall_covers_every_entry(cfg):
     victim = next(k for k in mine if k not in final_keys and not any(
         x.site_id == locked_qb for x in res.contest.candidates if x.player_key == k))
     name = res.contest.players[victim].name
-    news = lambda t: {"updates": [{"player": name, "status": "out", "text": f"{name} ruled out"}]}
+    news = lambda t: {"updates": [{"player": name, "status": "out", "text": f"{name} ruled out", "source_url": "https://www.nfl.com/news/inactives"}]}
     early = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
     out = lastcall(res.run_dir, web=True, now=early, backend=fake(news=news), log=lambda s: None)
     rows = list(csv.reader(open(res.run_dir / "upload_final.csv")))
@@ -275,7 +275,7 @@ def test_lastcall_keeps_a_started_pick_that_news_calls_out(cfg):
     if started_pick is None:
         pytest.skip("fixture lineup has no early-game player")
     name = res.contest.players[started_pick].name
-    news = lambda t: {"updates": [{"player": name, "status": "out", "text": "left the game, ruled out"}]}
+    news = lambda t: {"updates": [{"player": name, "status": "out", "text": "left the game, ruled out", "source_url": "https://www.nfl.com/news/inactives"}]}
     out = lastcall(res.run_dir, web=True, now=mid, backend=fake(news=news), log=lambda s: None)
     assert started_pick in out["final"].player_keys and started_pick in out["out_but_locked"]
     assert check_legal(res.contest, out["final"]) == []

@@ -18,8 +18,9 @@ it, surface its warnings, and relay its results honestly.
 3. Ask for, or default, the contest kind (cash vs tournament) and field size, and whether the user
    has pick rules. Pick rules go in a YAML file, e.g. `lock: [Name]`, `exclude: [Name]`,
    `max_from_team: 3`, `stack: [{team: BUF, positions: [QB, WR], min: 2}]`.
-4. `python -m dfs.cli run <file> [--rules my_rules.yaml] [--field-size N]`. Default budget $15,
-   55-minute deadline. Use `--no-web` for a quick structured-data-only run.
+4. `python -m dfs.cli run <file> [--kind cash|gpp] [--rules my_rules.yaml] [--field-size N]`. Pass
+   `--kind` for salary files (they do not say which it is; entries files are read from contest names).
+   Default budget $15, 55-minute deadline. Use `--no-web` for a quick structured-data-only run.
 5. Report: the final lineup table from `runs/<id>/report.md`, the upload file path
    (`runs/<id>/upload.csv`), the second lineup with the user's rules if any, the strategist's
    weakest pick and close calls, and the checker's verdict. Quote the model's P(top x%) only as a
@@ -29,7 +30,8 @@ it, surface its warnings, and relay its results honestly.
 
 `python -m dfs.cli lastcall runs/<id>`: searches news on every pick, checks inactives,
 re-forecasts affected NFL players, keeps started games locked, and changes the lineup only if a pick
-is out or a new lineup leads by more than 1%. Hand over `runs/<id>/upload_final.csv`.
+is out or a new lineup leads by more than 1%. Hand over `runs/<id>/upload_final.csv`. If it prints
+"WARNING: the news/inactives check FAILED", say so plainly: those picks were not checked.
 
 ## After the slate
 

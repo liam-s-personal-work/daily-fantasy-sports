@@ -318,11 +318,16 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
 
 
 def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[str]:
+    """Players a dossier lists as ruled out AND proves with one of its own facts (an availability fact
+    about him, not low-confidence, that says he will not play). A bare name in the list removes nobody:
+    it could be a hallucination or text injected by a web page."""
     out = set()
     for d in dossiers.values():
         names = {_subject_name(n) for n in d.ruled_out}  # 'Josh Allen (concussion)' -> 'josh allen'
         for k in _players_of_game(contest, d.game):
-            if key_name(k, contest) in names:
+            if key_name(k, contest) in names and any(
+                    f.kind in ("injury", "status") and f.confidence != "low" and not host_blocked(f.source_url)
+                    and fact_about(f, k, contest) and says_out(f) for f in d.facts):
                 out.add(k)
     return out
 
@@ -456,9 +461,12 @@ def parse_news(results: list[AgentResult], contest: Contest, keys: list[str]) ->
         if not r.ok or not r.output:
             continue
         for u in r.output.get("updates", []):
-            k = by_name.get(norm_name(u.get("player", "")))
-            if k:
-                out[k] = u
+            k = by_name.get(_subject_name(u.get("player", "")))
+            if not k or host_blocked(u.get("source_url")):
+                continue  # never act on news from DFS, betting or no-automation sites
+            if u.get("status") in ("inactive", "out") and not u.get("source_url"):
+                u = {**u, "status": "questionable", "text": f"(unsourced 'out' downgraded) {u.get('text', '')}"}
+            out[k] = u
     return out
 
 

@@ -35,7 +35,7 @@ REGISTER: dict[str, dict] = {
 
 # Facts sourced from these hosts are dropped: DFS and pick'em operators, paywalled projection sites,
 # odds and betting sites, and sites that forbid automated access.
-BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|dkapi|rotowire\.com|fantasypros\.com|"
+BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|draftkings\.\w+|fanduel\.\w+|rotowire\.com|fantasypros\.com|"
                            r"sports-reference\.com|pro-football-reference\.com|stathead\.com|prizepicks\.com|"
                            r"underdogfantasy\.com|numberfire\.com|rotogrinders\.com|4for4\.com|actionnetwork\.com|"
                            r"covers\.com|vegasinsider\.com|oddsshark\.com|sportsline\.com|betmgm\.com|caesars\.com|"
@@ -48,8 +48,8 @@ BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantas
 FETCH_ALLOW_DOMAINS = ["api.weather.gov", "www.weather.gov", "forecast.weather.gov", "open-meteo.com",
                        "api.open-meteo.com", "raw.githubusercontent.com"]
 # Add domains you have confirmed allow automated access: DFS_FETCH_ALLOW="www.patriots.com,www.chicagobears.com"
-FETCH_ALLOW_DOMAINS += [d.strip() for d in os.environ.get("DFS_FETCH_ALLOW", "").split(",")
-                        if d.strip() and not BLOCKED_HOSTS.search(d.strip())]
+FETCH_ALLOW_DOMAINS += [d.strip().rstrip(".").lower() for d in os.environ.get("DFS_FETCH_ALLOW", "").split(",")
+                        if d.strip() and not BLOCKED_HOSTS.search(d.strip().rstrip(".").lower())]
 
 
 class SourceNotAllowed(PermissionError):
@@ -67,7 +67,8 @@ def host_blocked(url: str | None) -> bool:
     if not url:
         return False
     u = urlparse(url if "://" in url else f"https://{url}")
-    return bool(BLOCKED_HOSTS.search(u.hostname or "") or BLOCKED_PATHS.search(u.path or ""))
+    host = (u.hostname or "").rstrip(".").lower()  # urlparse already drops the port
+    return bool(BLOCKED_HOSTS.search(host) or BLOCKED_PATHS.search(u.path or ""))
 
 
 # --------------------------------------------------------------------------- forecaster blind

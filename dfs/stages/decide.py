@@ -296,5 +296,8 @@ class Decider:
             lines.append(f"- checker attempt {chk.get('attempt')}: passed={chk.get('passed')} failed={chk.get('failed_picks')}")
         if self.report.get("used_backup"):
             lines.append("- main review failed; the backup review's lineup was used")
+        if self.report.get("no_review"):
+            lines.append("- WARNING: both the main and the backup review failed: this is the solver's lineup "
+                         "on the blended numbers, with no agent review")
         lines += ["", "## Run", "", f"- timing (s): {timing}", f"- model calls: {llm}"]
         return "\n".join(lines) + "\n"

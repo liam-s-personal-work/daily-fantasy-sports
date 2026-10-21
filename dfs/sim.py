@@ -22,7 +22,9 @@ CORR_FILE = Path(__file__).parent / "rules" / "correlations.yaml"
 
 @lru_cache(maxsize=None)
 def load_correlations(sport: str) -> dict:
-    data = yaml.safe_load(CORR_FILE.read_text()) if CORR_FILE.exists() else {}
+    if not CORR_FILE.exists():  # without it every lineup would be simulated as if players were independent
+        raise FileNotFoundError(f"{CORR_FILE} is missing (reinstall the package)")
+    data = yaml.safe_load(CORR_FILE.read_text())
     return (data or {}).get(sport, {})
 
 

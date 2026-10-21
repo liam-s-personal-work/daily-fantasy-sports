@@ -174,6 +174,9 @@ class Runner:
         self.budget_usd = budget_usd
         self.spent_usd = 0.0
         self.reserved_usd = 0.0
+        self.concurrency = concurrency
+        self.in_flight = 0
+        self.deadline_at: float | None = None  # time.monotonic() after which no agent task may run
         self.sem = asyncio.Semaphore(concurrency)
         self.replay_only = replay_only
         self.retries = retries
@@ -205,17 +208,29 @@ class Runner:
                 if left < min(est, 0.05) or left <= 0:
                     res = AgentResult(name=task.name, output=None, ok=False, error="run budget exhausted")
                     break
+                timeout = task.timeout_s
+                if self.deadline_at is not None:  # the run's deadline is a hard stop for every agent call
+                    timeout = min(timeout, self.deadline_at - time.monotonic())
+                    if timeout < 10:
+                        res = AgentResult(name=task.name, output=None, ok=False, error="run deadline reached")
+                        break
+                # Each task may spend at most its share of what is left: the tasks that can run at the
+                # same time cannot together exceed the run budget.
+                share = left / max(1, self.concurrency - self.in_flight)
+                capped = replace(task, max_budget_usd=round(min(task.max_budget_usd or share, share), 4))
                 self.reserved_usd += est
-                # the SDK stops the task itself if it would spend more than what is left of the run budget
-                capped = replace(task, max_budget_usd=round(min(task.max_budget_usd or left, left), 4))
+                self.in_flight += 1
                 try:
-                    res = await asyncio.wait_for(self.backend.run(capped), timeout=task.timeout_s)
+                    res = await asyncio.wait_for(self.backend.run(capped), timeout=timeout)
                 except asyncio.TimeoutError:
-                    res = AgentResult(name=task.name, output=None, ok=False, error=f"timeout {task.timeout_s}s")
+                    # the call was billed even though it never answered: charge its estimate
+                    res = AgentResult(name=task.name, output=None, ok=False, cost_usd=est,
+                                      error=f"timeout {timeout:.0f}s (cost estimated)")
                 except Exception as e:
                     res = AgentResult(name=task.name, output=None, ok=False, error=repr(e))
                 finally:
                     self.reserved_usd -= est
+                    self.in_flight -= 1
                 self.spent_usd += res.cost_usd
                 if res.ok:
                     break

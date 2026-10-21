@@ -28,7 +28,7 @@ dfs = "dfs.cli:main"
 include = ["dfs*"]
 
 [tool.setuptools.package-data]
-dfs = ["rules/registry/*.yaml", "rules/scoring/*.yaml", "llm/prompts/*.md"]
+dfs = ["rules/*.yaml", "rules/registry/*.yaml", "rules/scoring/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
