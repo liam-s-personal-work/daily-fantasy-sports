@@ -112,6 +112,8 @@ def late_swap(contest: Contest, lineup: Lineup, points: Mapping[str, float | Pro
     stale = set(base.lock_keys) & (started - locked_keys)
     if stale:
         notes.append(f"locks on players already started outside the lineup ignored: {sorted(stale)}")
+    if set(base.lock_keys) & out_keys - locked_keys:
+        notes.append(f"locks on ruled-out players ignored: {sorted(set(base.lock_keys) & out_keys - locked_keys)}")
     o = replace(base, slot_locks={**base.slot_locks, **{i: lineup.slots[i].site_id for i in locked_idx}},
                 lock_keys=(set(base.lock_keys) - stale - out_keys) | locked_keys,
                 exclude_keys=(set(base.exclude_keys) | out_keys | started) - locked_keys,

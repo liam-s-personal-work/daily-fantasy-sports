@@ -79,3 +79,13 @@ def test_week6_fanduel_and_contest_matching(week6):
     proj, fr = project_week(2026, 6, "fanduel.nfl", players=players, n_sims=1500, data=data)
     assert set(proj) == {p.key for p in players} and not fr.attrs["unmatched"]
     assert proj["fd-def"].mean > 0
+
+
+def test_week6_kickers_for_showdown(week6):
+    from dfs.projections.nfl import project_week
+
+    data = week6[0]
+    proj, frame = project_week(2026, 6, "draftkings.nfl", n_sims=1500, data=data, include_kickers=True)
+    k = frame[frame["kind"] == "kicker"]
+    assert len(k) == 28 and k["mean"].between(4, 14).all()
+    assert all(proj[g].p10 <= proj[g].p50 <= proj[g].p90 for g in k["key"])

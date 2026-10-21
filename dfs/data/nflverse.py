@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -103,11 +104,18 @@ def load_season(name: str, season: int, max_age_hours: float | None = None,
     max_age = DEFAULT_MAX_AGE_H if max_age_hours is None else max_age_hours
     path = cache_path(name, season)
     if refresh or _is_stale(path, season, max_age):
-        df = _to_pandas(_loader(name)(season))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp.parquet")
-        df.to_parquet(tmp, index=False)
-        tmp.replace(path)
+        try:
+            df = _to_pandas(_loader(name)(season))
+        except Exception as exc:  # network / upstream failure: a stale cache beats no data
+            if not path.exists():
+                raise
+            age_h = (time.time() - path.stat().st_mtime) / 3600.0
+            warnings.warn(f"nflverse {name} {season}: refresh failed ({exc!r}); using cache {age_h:.1f}h old", stacklevel=2)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.parquet")
+            df.to_parquet(tmp, index=False)
+            tmp.replace(path)
     return _normalize_keys(_read_parquet(str(path), path.stat().st_mtime).copy())
 
 

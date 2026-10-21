@@ -138,3 +138,23 @@ def test_current_season_boundary():
     assert nv.current_season(date(2026, 3, 1)) == 2025
     assert nv.current_season(date(2026, 9, 8)) == 2025  # Labor Day 2026 is Sep 7; the opener was Wed Sep 9
     assert nv.current_season(date(2026, 9, 9)) == 2026
+
+
+def test_stale_cache_used_when_refresh_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(nv, "CACHE_DIR", tmp_path)
+    cur = nv.current_season()
+    ok = lambda name: (lambda s: pd.DataFrame({"season": [s], "week": [1], "v": [1]}))
+    monkeypatch.setattr(nv, "_loader", ok)
+    nv.load_season("y", cur, max_age_hours=0.0)
+
+    def boom(name):
+        def f(s):
+            raise ConnectionError("offline")
+        return f
+
+    monkeypatch.setattr(nv, "_loader", boom)
+    with pytest.warns(UserWarning, match="refresh failed"):
+        df = nv.load_season("y", cur, max_age_hours=0.0)
+    assert df["v"].tolist() == [1]
+    with pytest.raises(ConnectionError):
+        nv.load_season("never_cached", cur, max_age_hours=0.0)

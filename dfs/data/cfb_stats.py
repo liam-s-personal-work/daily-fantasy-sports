@@ -799,25 +799,28 @@ def validate_against_box(lines: pd.DataFrame, box: pd.DataFrame, table_id: str =
 
 
 def validate_against_aggregates(lines: pd.DataFrame, passing: pd.DataFrame, rushing: pd.DataFrame,
-                                receiving: pd.DataFrame) -> dict:
+                                receiving: pd.DataFrame, schedules: pd.DataFrame | None = None) -> dict:
     """Season sums per player vs the sportsdataverse season aggregates (themselves cfbfastR-pbp derived).
 
-    The aggregates count sacks with passing (``sacked``/``sack_yds``), so pbp ``carries``/``carry_yds``
-    (non-sack rushes) are compared with their rushing ``plays``/``yards``.
+    Scope and conventions of the aggregate files (checked on 2026): FBS-vs-FBS games only
+    (``schedules.fbs_game``), so lines are restricted to those games when ``schedules`` is given;
+    passing ``att`` excludes interceptions (compared with pbp ``pass_att - int_thrown``); sacks are
+    counted with passing, so pbp ``carries``/``carry_yds`` (non-sack rushes) are compared with the
+    rushing ``plays``/``yards``.
     """
-    season = lines.groupby("athlete_id").agg(pass_att=("pass_att", "sum"), pass_cmp=("pass_cmp", "sum"),
-                                             pass_yds=("pass_yds", "sum"), pass_td=("pass_td", "sum"),
-                                             int_thrown=("int_thrown", "sum"), sacks=("sacks", "sum"),
-                                             carries=("carries", "sum"), carry_yds=("carry_yds", "sum"),
-                                             rush_td=("rush_td", "sum"), targets=("targets", "sum"),
-                                             rec=("rec", "sum"), rec_yds=("rec_yds", "sum"), rec_td=("rec_td", "sum"))
+    if schedules is not None and "fbs_game" in schedules.columns:
+        fbs = set(schedules.loc[schedules["fbs_game"].fillna(False).astype(bool), "game_id"].astype("int64"))
+        lines = lines[lines["game_id"].isin(fbs)]
+    l = lines.assign(att_ex_int=lines["pass_att"] - lines["int_thrown"])
+    season = l.groupby("athlete_id")[["att_ex_int", "pass_cmp", "pass_yds", "pass_td", "int_thrown", "sacks", "carries",
+                                      "carry_yds", "rush_td", "targets", "rec", "rec_yds", "rec_td"]].sum()
     pairs = {
-        "passing": (passing, {"att": "pass_att", "comp": "pass_cmp", "yards": "pass_yds", "passing_td": "pass_td",
+        "passing": (passing, {"att": "att_ex_int", "comp": "pass_cmp", "yards": "pass_yds", "passing_td": "pass_td",
                               "pass_int": "int_thrown", "sacked": "sacks"}),
         "rushing": (rushing, {"plays": "carries", "yards": "carry_yds", "rushing_td": "rush_td"}),
         "receiving": (receiving, {"targets": "targets", "comp": "rec", "yards": "rec_yds", "passing_td": "rec_td"}),
     }
-    rep: dict = {}
+    rep: dict = {"scope": "FBS-vs-FBS games" if schedules is not None else "all games"}
     for name, (agg, cols) in pairs.items():
         if agg is None or agg.empty:
             continue

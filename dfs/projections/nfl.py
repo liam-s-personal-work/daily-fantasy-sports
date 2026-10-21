@@ -59,7 +59,8 @@ class NFLParams:
     n0_catch: float = 30.0
     n0_ypt: float = 50.0
     n0_ypc: float = 80.0
-    n0_qb_rush: float = 40.0
+    n0_qb_rush: float = 40.0  # QB carry share when starting (pseudo team carries)
+    n0_qb_ypc: float = 20.0  # QB yards per carry (scrambles are a skill: shrink less than RBs)
     td_actual_weight: float = 0.25  # weight of actual TDs vs ff_opportunity expected TDs in TD shares
     # redistribution
     gamma: float = 1.0
@@ -122,6 +123,7 @@ class NFLData:
     rosters: pd.DataFrame
     depth_raw: dict[int, pd.DataFrame]
     kicking: pd.DataFrame  # per team-game FG/XP detail
+    kicker_games: pd.DataFrame = field(default_factory=pd.DataFrame)  # per kicker-game FG distances / XP
     cache: dict = field(default_factory=dict, repr=False)  # memo of parameter-free per-week pieces
 
     @classmethod
@@ -154,8 +156,11 @@ class NFLData:
         ros["pos"] = ros["position"].map(POS_MAP)
         inj = inj.copy()
         inj["week"] = inj["week"].astype(int)
+        kg = ps.loc[ps["position"] == "K", ["player_id", "player_display_name", "season", "week", "team", "fg_made",
+                                            "fg_made_list", "pat_made"]].rename(
+            columns={"player_id": "gsis_id", "player_display_name": "name"})
         return cls(seasons=list(seasons), schedules=sched, team_games=tg, player_games=pg, injuries=inj,
-                   rosters=ros, depth_raw=depth, kicking=_kicking(ts))
+                   rosters=ros, depth_raw=depth, kicking=_kicking(ts), kicker_games=kg.reset_index(drop=True))
 
     def depth_chart(self, season: int, week: int, as_of: pd.Timestamp | None) -> pd.DataFrame:
         key = ("depth", season, week, str(as_of))
@@ -677,7 +682,8 @@ def estimate_usage(h: pd.DataFrame, pool: pd.DataFrame, season: int, week: int, 
     x_ypc = shrink(u["xuy_w"], u["car_wx"], ypc0, 15.0)
     u["catch"] = np.clip(shrink(u["rec_w"], u["tgt_w"], x_cr, P.n0_catch), 0.2, 0.95)
     u["ypt"] = np.clip(shrink(u["ry_w"], u["tgt_w"], x_ypt, P.n0_ypt), 2.0, 16.0)
-    u["ypc"] = np.clip(shrink(u["uy_w"], u["car_w"], x_ypc, P.n0_ypc), 1.0, 8.0)
+    n0_ypc = np.where(is_qb, P.n0_qb_ypc, P.n0_ypc)
+    u["ypc"] = np.clip(shrink(u["uy_w"], u["car_w"], x_ypc, n0_ypc), 1.0, 9.0)
     u["fumble_rate"] = shrink(u["fl_w"], u["touch_w"], eff("fumble"), 150.0)
     u["st_td_rate"] = shrink(u["st_w"], u["g_w"], eff("st_td"), 8.0)
     u["fum_rec_td_rate"] = eff("fum_rec_td")
