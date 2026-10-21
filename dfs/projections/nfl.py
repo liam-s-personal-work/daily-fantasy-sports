@@ -966,6 +966,10 @@ def simulate_kicker(t: pd.DataFrame, fg_bin_probs: np.ndarray, xp_per_td: float,
 # --------------------------------------------------------------------------- week context
 
 
+PREGAME_COLS = ["game_id", "season", "week", "game_type", "gameday", "gametime", "spread_line", "total_line", "roof",
+                "team", "opponent", "is_home", "implied", "opp_implied", "team_spread"]
+
+
 @dataclass
 class WeekContext:
     season: int
@@ -999,9 +1003,7 @@ def build_context(data: NFLData, season: int, week: int, params: NFLParams | Non
     """Everything known before kickoff of (season, week), plus history strictly before it."""
     P = params or NFLParams()
     tg = data.team_games
-    games = tg[(tg["season"] == season) & (tg["week"] == week)].copy()
-    games = games.drop(columns=[c for c in TEAM_STATS if c in games.columns] + ["points", "opp_points"],
-                       errors="ignore")
+    games = tg.loc[(tg["season"] == season) & (tg["week"] == week), [c for c in PREGAME_COLS if c in tg.columns]].copy()
     if teams is not None:
         keep = {canonicalize(t) for t in teams}
         games = games[games["team"].isin(keep) | games["opponent"].isin(keep)]
@@ -1034,14 +1036,6 @@ def build_context(data: NFLData, season: int, week: int, params: NFLParams | Non
     pool["rep"] = pool["report_status"].map(_report_cat)
     pool["prac"] = pool["practice_status"].map(_practice_cat)
     pool["role"] = recent_roles(pool, data)
-    akey = ("availability", season, week)
-    if akey not in data.cache:
-        data.cache[akey] = AvailabilityModel.fit(data, season, week)
-    av = data.cache[akey]
-    pool["p_active"] = [av.prob(*k) for k in zip(pool["pos"], pool["rep"], pool["prac"], pool["role"])]
-    out_status = pool["status"].isin(UNAVAILABLE_STATUS) | (P.use_inactives & (pool["status"] == "INA")) \
-        | (pool["rep"] == "out")  # the official "Out" designation is final
-    pool.loc[out_status, "p_active"] = 0.0
 
     # depth chart known before each game day
     ranks = []
@@ -1053,7 +1047,18 @@ def build_context(data: NFLData, season: int, week: int, params: NFLParams | Non
     dc = dc.drop_duplicates(["team", "gsis_id", "pos"])
     pool = pool.merge(dc[["team", "gsis_id", "pos", "rank"]].rename(columns={"rank": "depth_rank"}),
                       on=["team", "gsis_id", "pos"], how="left")
-    pool["depth_rank"] = pool["depth_rank"].fillna(9.0)
+    pool["depth_rank"] = pool["depth_rank"].astype(float).fillna(9.0)
+    pool["dc"] = depth_bucket(pool["pos"], pool["depth_rank"])
+
+    for col, target in (("p_active", "played"), ("p_dress", "active")):
+        akey = ("availability", target, season, week)
+        if akey not in data.cache:
+            data.cache[akey] = AvailabilityModel.fit(data, season, week, target=target)
+        av = data.cache[akey]
+        pool[col] = [av.prob(*k) for k in zip(pool["pos"], pool["rep"], pool["prac"], pool["role"], pool["dc"])]
+    out_status = pool["status"].isin(UNAVAILABLE_STATUS) | (P.use_inactives & (pool["status"] == "INA")) \
+        | (pool["rep"] == "out")  # the official "Out" designation is final
+    pool.loc[out_status, ["p_active", "p_dress"]] = 0.0
 
     usage = estimate_usage(hist, pool, season, week, P, league)
     pool = usage
