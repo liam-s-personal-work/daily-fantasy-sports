@@ -212,7 +212,7 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
                             team=team, opp=opp, game=game, start=start, avg=_float(get("AvgPointsPerGame")),
                             status=get("Status") or None, detail=None, mvp_salary=None))
     else:
-        need = ["Id", "Position", "Nickname", "Salary", "Game", "Team", "Opponent", "Roster Position"]
+        need = ["Id", "Position", "Nickname", "Salary", "Game", "Team", "Opponent"]  # Roster Position: optional (2020 files)
         missing = [h for h in need if h not in col]
         if missing:
             raise ContestFileError(f"FD player list missing columns {missing}")
@@ -222,7 +222,8 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
                 continue
             game, _ = _parse_game_info(get("Game"))
             raw.append(dict(id=get("Id"), name=get("Nickname"), display=f"{get('Id')}:{get('Nickname')}",
-                            positions=[p for p in get("Position").split("/") if p], roster=get("Roster Position"),
+                            positions=[p for p in get("Position").split("/") if p],
+                            roster=get("Roster Position") if "Roster Position" in col else None,
                             salary=int(float(get("Salary"))), team=get("Team").upper(), opp=get("Opponent").upper() or None,
                             game=game, start=None, avg=_float(get("FPPG")), status=get("Injury Indicator") or None,
                             detail=get("Injury Details") or None,
@@ -232,6 +233,9 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
 
     has_cpt = any("CPT" in (x["roster"] if isinstance(x["roster"], list) else [x["roster"]]) for x in raw)
     has_mvp = any(isinstance(x["roster"], str) and x["roster"].upper().startswith("MVP") for x in raw)
+    # Only the MVP salary column marks FD's current single-game format; older files share the
+    # "MVP - 1.5X Points" text but price the MVP at the FLEX salary.
+    legacy_sg = has_mvp and site == Site.FANDUEL and all(x["mvp_salary"] is None for x in raw)
     all_pos = {p.upper() for x in raw for p in x["positions"]}
     teams = {x["team"] for x in raw if x["team"]}
     sport = sport or _detect_sport(all_pos, teams, site, has_cpt)
@@ -240,7 +244,7 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
         if has_cpt:
             game_type = "showdown"
         elif has_mvp:
-            game_type = "single_game"
+            game_type = "single_game_legacy" if legacy_sg else "single_game"
         else:
             game_type = "classic"
     rules = rules or load_rules(site, sport, game_type)
@@ -259,7 +263,11 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
             cands.append(Candidate(player_key=key, site_id=x["id"], salary=x["salary"], eligible_slots=elig,
                                    display=x["display"]))
         else:
-            tokens = [t.strip() for t in x["roster"].split("/") if t.strip()]
+            if x["roster"] is None:  # no Roster Position column: eligibility from the saved slots
+                pos = {q.upper() for q in x["positions"]}
+                tokens = list(dict.fromkeys(sl.name for sl in rules.slots if pos & set(sl.eligible)))
+            else:
+                tokens = [t.strip() for t in x["roster"].split("/") if t.strip()]
             mvp = [t for t in tokens if t.upper().startswith("MVP")]
             rest = [_canon_slot(t) for t in tokens if not t.upper().startswith("MVP")]
             if rest:
@@ -268,8 +276,8 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
             if mvp:
                 sal = x["mvp_salary"]
                 if sal is None:
-                    sal = int(round(x["salary"] * 1.5))
-                    warnings.append("MVP salary column missing; assumed 1.5x Salary")
+                    mult = next((sl.salary_multiplier for sl in rules.slots if sl.name == "MVP"), 1.0)
+                    sal = int(round(x["salary"] * mult))
                 cands.append(Candidate(player_key=key, site_id=x["id"], salary=sal, eligible_slots=["MVP"],
                                        display=x["display"]))
 
@@ -316,6 +324,9 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
             warnings.append(f"{len(bad)} CPT rows are not priced at 1.5x their FLEX row")
     if rules.game_type in ("showdown", "single_game") and len(games) > 1:
         warnings.append(f"{rules.game_type} file spans {len(games)} games")
+    if legacy_sg:
+        warnings.append("FanDuel single-game file in the pre-Aug-2025 format (no MVP salary column): "
+                        "using MVP + 4 FLEX with no MVP salary premium; check the contest's rules")
     if rules.confidence != "high":
         warnings.append(f"saved rules for {site.value}.{sport}.{game_type} are {rules.confidence}-confidence; "
                         f"confirm cap {rules.salary_cap} and slots against the contest's rules page")

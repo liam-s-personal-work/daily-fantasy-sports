@@ -31,6 +31,7 @@ def test_detects_every_fixture_kind():
         "dk_salaries_classic.csv": "dk_salaries", "dk_entries_classic.csv": "dk_entries",
         "dk_salaries_showdown.csv": "dk_salaries", "fd_players_classic.csv": "fd_players",
         "fd_players_single_game.csv": "fd_players", "fd_entries_classic.csv": "fd_entries",
+        "fd_players_single_game_legacy.csv": "fd_players", "fd_players_classic_no_roster_col.csv": "fd_players",
     }
 
 
@@ -85,6 +86,22 @@ def test_fd_classic_and_single_game():
         mvp = next(r for r in rows if r.eligible_slots == ["MVP"])
         flex = next(r for r in rows if r.eligible_slots == ["FLEX"])
         assert mvp.site_id == flex.site_id and mvp.salary == int(flex.salary * 1.5)
+
+
+def test_fd_legacy_single_game_has_no_mvp_premium():
+    c = load_contest(FIX / "fd_players_single_game_legacy.csv")
+    assert c.rules.game_type == "single_game_legacy" and len(c.rules.slots) == 5
+    for k in c.players:
+        rows = c.candidates_for(k)
+        assert len({r.salary for r in rows}) == 1  # MVP costs the FLEX salary
+    assert any("pre-Aug-2025" in w for w in c.warnings)
+
+
+def test_fd_list_without_roster_position_uses_saved_slots():
+    a = load_contest(FIX / "fd_players_classic.csv")
+    b = load_contest(FIX / "fd_players_classic_no_roster_col.csv")
+    elig = lambda c: sorted((x.site_id, tuple(x.eligible_slots)) for x in c.candidates)
+    assert elig(a) == elig(b)
 
 
 def test_fd_entries_template():

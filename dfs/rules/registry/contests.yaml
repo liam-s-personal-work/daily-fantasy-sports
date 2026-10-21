@@ -45,6 +45,13 @@ contests:
     confidence: medium
     notes: ["Format since Aug 2025: MVP + 5 FLEX, MVP 1.5x points and 1.5x salary."]
     sources: [https://www.fanduel.com/research/fanduel-launches-new-single-game-daily-fantasy-format]
+  fanduel.nfl.single_game_legacy:
+    salary_cap: 60000
+    slots: [[MVP, [QB, RB, WR, TE, K], 1.5, 1.0], [FLEX, [QB, RB, WR, TE, K]], [FLEX, [QB, RB, WR, TE, K]], [FLEX, [QB, RB, WR, TE, K]], [FLEX, [QB, RB, WR, TE, K]]]
+    max_per_team: 4
+    scoring: fanduel.nfl
+    confidence: medium
+    notes: ["Pre-Aug-2025 format: MVP + 4 FLEX, MVP 1.5x points, no salary premium. Files have no 'MVP 1.5x Salary' column."]
   draftkings.cfb.classic:
     salary_cap: 50000
     slots: [[QB, [QB]], [RB, [RB]], [RB, [RB]], [WR, [WR]], [WR, [WR]], [WR, [WR]], [FLEX, [RB, WR]], [SUPERFLEX, [QB, RB, WR]]]
