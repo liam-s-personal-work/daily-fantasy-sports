@@ -36,7 +36,7 @@ class Decision:
 class Decider:
     def __init__(self, contest: Contest, projections: dict[str, Projection], cfg, runner,
                  dossiers: dict[str, GameDossier], log: Callable[[str], None] = print,
-                 n_lineups: int = 1, now=None, priced: set[str] = frozenset()):
+                 n_lineups: int = 1, now=None, priced: set[str] = frozenset(), clock=None):
         self.c = contest
         self.proj = projections
         self.cfg = cfg
@@ -51,6 +51,7 @@ class Decider:
         self.priced = set(priced)  # fact ids the forecaster already saw
         # Players whose games have started can no longer be added (late swap); locked cells stay.
         self.now = now
+        self.clock = clock  # the run's deadline: review stages get only the time that is left
         self._fallback_locks: dict[int, str] = {}  # when no fresh lineup is possible (late swap), solve around locks
         self.started = {k for k, p in contest.players.items() if now and p.start_time and p.start_time <= now}
 
@@ -80,6 +81,19 @@ class Decider:
         for lu in res["lineups"]:
             lu.label = label
         return res["lineups"][0], res
+
+    def _timeout(self, share: float) -> float:
+        """Seconds a review task may take: its share of the time left, between 45 s and 15 minutes."""
+        if self.clock is None:
+            return 900.0
+        return max(45.0, min(900.0, self.clock.left() * share))
+
+    def _apply(self, fn, *args):
+        """Run an apply_* step; malformed agent output counts as that agent failing, never as a crash."""
+        try:
+            return fn(*args), None
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
+            return None, f"malformed agent output: {e}"
 
     # ------------------------------------------------------------------ main
     async def decide(self) -> Decision:
@@ -114,16 +128,18 @@ class Decider:
 
         # Strategist and backup run side by side.
         strat_t = agents.strategist_task(c, drafts, top3_text, self.dossiers, self.proj, self._objective_name(),
-                                         model=cfg.review_model)
+                                         model=cfg.review_model, timeout_s=self._timeout(0.25))
         backup_t = agents.strategist_task(c, drafts, top3_text, self.dossiers, self.proj, self._objective_name(),
-                                          model=cfg.backup_model, backup=True)
+                                          model=cfg.backup_model, backup=True, timeout_s=self._timeout(0.25))
         strat, backup = await asyncio.gather(self.runner.run(strat_t), self.runner.run(backup_t))
-        if strat.ok:
-            excluded, srep = agents.apply_strategist(strat.output, self.idx, c, self.dossiers, self.priced)
+        applied, err = (self._apply(agents.apply_strategist, strat.output, self.idx, c, self.dossiers, self.priced)
+                        if strat.ok else (None, strat.error))
+        if applied is not None:
+            excluded, srep = applied
             self.report["strategist"] = {"raw": strat.output, "applied": srep}
         else:
             main_ok = False
-            self.report["strategist"] = {"error": strat.error}
+            self.report["strategist"] = {"error": err}
 
         try:
             final, res = self._choose(means, excluded, "final")
@@ -144,34 +160,46 @@ class Decider:
         for attempt in range(3):
             if not main_ok:
                 break
-            chk = await self.runner.run(agents.checker_task(c, final, self.dossiers, self.proj,
-                                                            model=cfg.review_model, attempt=attempt))
-            if not chk.ok:
-                main_ok = False
-                checks.append({"attempt": attempt, "error": chk.error})
+            if self.clock is not None and self.clock.left() < 60:
+                checks.append({"attempt": attempt, "error": "skipped: run deadline reached"})
                 break
-            passed, fails, notes = agents.checker_verdict(chk.output, self.idx, c, final, self.priced)
+            chk = await self.runner.run(agents.checker_task(c, final, self.dossiers, self.proj, model=cfg.review_model,
+                                                            attempt=attempt, timeout_s=self._timeout(0.2)))
+            verdict, err = (self._apply(agents.checker_verdict, chk.output, self.idx, c, final, self.priced)
+                            if chk.ok else (None, chk.error))
+            if verdict is None:
+                main_ok = False
+                checks.append({"attempt": attempt, "error": err})
+                break
+            passed, fails, notes = verdict
             checks.append({"attempt": attempt, "passed": passed, "failed_picks": sorted(fails), **notes})
             if passed:
                 break
+            excluded |= fails  # a verified failure is excluded from every later lineup, the backup's included
             if attempt == 2:
                 main_ok = False  # still failing after 2 revisions -> backup path
                 break
-            excluded |= fails
             final, res = self._choose(means, excluded, "final")
         self.report["checker"] = checks
         stage["after_checker"] = final
 
         # Backup path if the main review failed.
-        if backup.ok:
-            bpoints, bremoved, brep = agents.apply_backup(backup.output, self.idx, c, means)
+        bapplied, berr = (self._apply(agents.apply_backup, backup.output, self.idx, c, means)
+                          if backup.ok else (None, backup.error))
+        if bapplied is not None:
+            bpoints, bremoved, brep = bapplied
             self.report["backup"] = {"raw": backup.output, "applied": brep}
         else:
             bpoints, bremoved = means, set()
-            self.report["backup"] = {"error": backup.error}
+            self.report["backup"] = {"error": berr}
         if not main_ok:
-            final, res = self._choose(bpoints, excluded | bremoved, "final (backup review)")
-            self.report["used_backup"] = True
+            if bapplied is not None:
+                final, res = self._choose(bpoints, excluded | bremoved, "final (backup review)")
+                self.report["used_backup"] = True
+            else:  # both reviews failed: the solver's lineup on the blended numbers, honestly labelled
+                final, res = self._choose(means, excluded, "final (no review: both reviews failed)")
+                self.report["used_backup"] = False
+                self.report["no_review"] = True
         stage["final"] = final
         self.report["selection"] = {k: v for k, v in res.items() if k != "lineups"}
 

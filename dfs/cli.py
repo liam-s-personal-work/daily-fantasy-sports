@@ -61,7 +61,7 @@ def _run(args) -> int:
     cfg = RunConfig(out_dir=Path(args.out), budget_usd=args.budget, deadline_min=args.deadline,
                     web_research=not args.no_web, forecaster=not args.no_forecast, n_sims=args.sims,
                     target_top=args.target_top, field_size=args.field_size, user_rules=_user_rules(args.rules),
-                    season=args.season, week=args.week, replay_only=args.replay)
+                    season=args.season, week=args.week, replay_only=args.replay, allow_lookahead=args.allow_lookahead)
     res = run(args.file, cfg, now=_now(args.now))
     print(f"\nupload file: {res.upload_path}")
     if res.rules_upload_path:
@@ -130,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--season", type=int); s.add_argument("--week", type=int)
     s.add_argument("--replay", action="store_true", help="answer model stages from cache only")
     s.add_argument("--now", help="ISO time to run as (e.g. 2026-10-18T16:00:00+00:00); default: the real time")
+    s.add_argument("--allow-lookahead", action="store_true",
+                   help="with --now in the past, still search the web (it will see the games' results)")
     s.set_defaults(fn=_run)
 
     s = sub.add_parser("lastcall"); s.add_argument("run_dir"); s.add_argument("--threshold", type=float, default=0.01)

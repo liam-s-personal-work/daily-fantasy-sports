@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -120,7 +120,7 @@ class NFLProvider:
         for k in ruled_out:
             proj.pop(k, None)
 
-        market, known, usage, sfacts = self._facts(contest, data, season, week, mapped)
+        market, known, usage, sfacts = self._facts(contest, data, season, week, mapped, now=now)
         ids = {r["player_key"]: (f"DST:{r['team']}" if r.get("kind") == "dst" else r["gsis_id"])
                for _, r in mapped.iterrows() if isinstance(r.get("player_key"), str)}
         return SlateContext(baseline=proj, market=market, known=known, usage=usage, structured_facts=sfacts,
@@ -128,8 +128,12 @@ class NFLProvider:
                             ids=ids, season=season, week=week, kickoffs=kickoffs(contest, data, season, week))
 
     # ------------------------------------------------------------------ facts
-    def _facts(self, contest: Contest, data: NFLData, season: int, week: int, mapped: pd.DataFrame):
+    def _facts(self, contest: Contest, data: NFLData, season: int, week: int, mapped: pd.DataFrame,
+               now: datetime | None = None):
+        """``now``: game-day inactives (roster status INA) are shown only from 90 minutes before a game's
+        kickoff, when the NFL announces them. Without ``now`` they stay hidden (backtests, experiments)."""
         sched = nv.week_schedule(season, week, data.schedules)
+        ko = kickoffs(contest, data, season, week)
         inj = nv.week_injuries(season, week, data.injuries)
         hist = data.player_games[(data.player_games["season"] == season) & (data.player_games["week"] < week)]
         key_by_gsis = {r["gsis_id"]: r["player_key"] for _, r in mapped.iterrows()
@@ -162,10 +166,13 @@ class NFLProvider:
                        f"practice: {prac if isinstance(prac, str) else 'n/a'}")
                 lines_known.append(txt)
                 if ir.get("position") in ("QB", "RB", "WR", "TE", "K") and (isinstance(status, str) or prac == "Did Not Participate In Practice"):
+                    st = {"out": "out", "doubtful": "doubtful", "questionable": "questionable"}.get(
+                        str(status).strip().lower()) if isinstance(status, str) else None
                     facts.append(Fact(subject=ir["full_name"], team=ir["team"], kind="injury", text=txt,
                                       source_url="https://github.com/nflverse/nflverse-data (NFL official injury report)",
-                                      as_of=f"{season} week {week}", confidence="high"))
+                                      as_of=f"{season} week {week}", confidence="high", status=st))
             ulines = []
+            inactives_out = now is not None and g in ko and now >= ko[g] - timedelta(minutes=90)
             for k in sorted(k for k, p in contest.players.items() if p.game == g):
                 r = rows_by_key.get(k)
                 if r is None or r.get("kind") != "player":
@@ -181,8 +188,11 @@ class NFLProvider:
                     v = df[col].mean() if len(df) else 0.0
                     return 0.0 if pd.isna(v) else float(v)
 
+                roster = r.get("status")
+                if roster == "INA" and not inactives_out:
+                    roster = "ACT"  # game-day inactive lists are not out yet at this time
                 parts = [f"{k} [{contest.players[k].name}, {r.get('team')} {pos}, depth {int(_num(r.get('depth_rank')))}"
-                         f", roster {r.get('status')}, report {r.get('rep')}, practice {r.get('prac')}]",
+                         f", roster {roster}, report {r.get('rep')}, practice {r.get('prac')}]",
                          f"games {len(hp)}; snap% last3 {100 * per_game(last3, 'offense_pct'):.0f} season {100 * per_game(hp, 'offense_pct'):.0f}"]
                 if pos == "QB":
                     parts.append(f"att/g {per_game(hp, 'attempts'):.1f} pass yds/g {per_game(hp, 'passing_yards'):.0f} "

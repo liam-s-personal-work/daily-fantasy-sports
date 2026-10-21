@@ -31,5 +31,23 @@
    "n": 1325
   }
  },
- "_source": "fit on 2026 NFL weeks 3-6 graded forecasts (docs/results/forecast_experiment_2026_wk3-6_blind.md); refit as more weeks are graded"
+ "_source": "fit on 2026 NFL weeks 3-6 graded forecasts (docs/results/forecast_experiment_2026_wk3-6_blind.md); refit as more weeks are graded",
+ "_fit_weeks": [
+  [
+   2026,
+   3
+  ],
+  [
+   2026,
+   4
+  ],
+  [
+   2026,
+   5
+  ],
+  [
+   2026,
+   6
+  ]
+ ]
 }

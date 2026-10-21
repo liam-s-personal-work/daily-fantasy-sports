@@ -36,7 +36,7 @@ def main() -> None:
     a = ap.parse_args()
     cfg = RunConfig(out_dir=Path(a.out), season=a.season, week=a.week, web_research=a.web,
                     forecaster=not a.no_forecast, budget_usd=a.budget, concurrency=a.concurrency,
-                    learned_blend=None, calibration=None, forecast_weight_override=a.weight)
+                    learned_blend=None, calibration=None, forecast_weight_override=a.weight, allow_lookahead=a.web)
     # Learned weights and calibration were fit on 2026 weeks 3-6, so replays of those weeks use the
     # user's priors and raw forecaster ranges (no peeking at graded results).
     t0 = time.monotonic()

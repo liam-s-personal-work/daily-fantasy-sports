@@ -11,6 +11,7 @@ from dfs.blend import blend, forecast_weight
 from dfs.distributions import mixture_mean
 from dfs.grade import grade_lineup, update_blend
 from dfs.llm.backend import AgentResult, AgentTask, FakeBackend, Runner
+from dfs.io.contest_file import norm_name
 from dfs.models import Fact, Forecast, GameDossier, Projection
 from dfs.optimize.ilp import solve
 from dfs.providers import GenericProvider
@@ -231,3 +232,133 @@ def test_update_blend_keeps_prior_without_evidence(tmp_path):
     st = update_blend(tmp_path / "b.json", "nfl", [{"position": "QB", "baseline_err": 1.0, "forecast_err": 1.0}] * 40,
                       prior_weight=0.85)
     assert st["nfl"]["QB"]["weight"] == 0.85
+
+
+@pytest.mark.parametrize("text", [
+    "Seahawks −2.5", "The over-under is 42.5", "a total of 42.5", "Game total sits at 51.5",
+    "Sportsbooks have the Rams laying 12.5 points", "Oddsmakers project LA for 32 points", "LA team total of 32",
+    "Seattle by 2.5 points", "Puka Nacua prop: over 7.5 receptions", "Nacua costs 9,800 on DraftKings", "priced at 9.8K",
+    "AvgPointsPerGame: 24.6", "site average is 24.6", "scored 31.2 PPR last week", "a low-end WR1 this week",
+    "the WR12 in rankings", "Josh Allen $8,200", "12% owned in GPPs"])
+def test_blind_drops_leaks(text):
+    assert blind_text(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    "Lamar Jackson (ankle) listed questionable after missing two games.", "He is the team's WR1 with a 28% target share.",
+    "Bills ranked 3rd in pass defense", "Skyy Moore (WR, GB): official report Out (Ankle); practice: Did Not Participate",
+    "Total of 3 touchdowns this season", "He played 64% of snaps", "Kyle Pitts owned the red zone"])
+def test_blind_keeps_facts(text):
+    assert blind_text(text) == text
+
+
+def test_blocked_hosts_and_betting_paths():
+    assert host_blocked("https://www.prizepicks.com/playbook-article/x")
+    assert host_blocked("https://www.si.com/nfl/betting/week-7-odds")
+    assert not host_blocked("https://www.nfl.com/news/injury-report")
+
+
+# --------------------------------------------------------------------------- review regressions (agents)
+
+def _named_contest():
+    from tests.conftest import make_toy_contest
+    c, _ = make_toy_contest()
+    names = {("T00", "RB0"): ("ATL", "Bijan Robinson", "RB"), ("T01", "RB0"): ("WAS", "Brian Robinson Jr.", "RB"),
+             ("T02", "QB0"): ("BUF", "Josh Allen", "QB"), ("T02", "QB1"): ("BUF", "Kyle Allen", "QB"),
+             ("T02", "WR0"): ("BUF", "Khalil Shakir", "WR"), ("T02", "TE0"): ("BUF", "Dalton Kincaid", "TE"),
+             ("T02", "DST0"): ("BUF", "Bills", "DST"), ("T03", "WR0"): ("JAX", "Brian Thomas Jr.", "WR"),
+             ("T04", "TE0"): ("LV", "Ian Thomas", "TE")}
+    players = {}
+    for k, p in c.players.items():
+        team, pos = k.split(":")
+        if (team, pos) in names:
+            t, n, ps = names[(team, pos)]
+            key = f"{t}|dst|DST" if ps == "DST" else f"{t}|{norm_name(n)}|{ps}"
+            players[key] = p.model_copy(update={"key": key, "name": n, "team": t, "positions": [ps]})
+    return c.model_copy(update={"players": players, "candidates": []})
+
+
+def test_fact_about_needs_the_players_own_subject():
+    c = _named_contest()
+    F = lambda subj, team, text="x": Fact(id="F", subject=subj, team=team, kind="status", text=text)
+    assert not agents.fact_about(F("Brian Robinson Jr.", "WAS", "ruled out (ankle)"), "ATL|bijan robinson|RB", c)
+    assert not agents.fact_about(F("Kyle Allen", "BUF", "inactive"), "BUF|josh allen|QB", c)
+    assert not agents.fact_about(F("Dalton Kincaid", "BUF", "ruled out; Shakir expected to see more targets"),
+                                 "BUF|khalil shakir|WR", c)
+    assert not agents.fact_about(F("Josh Allen", "BUF", "ruled out with a concussion"), "BUF|dst|DST", c)
+    assert not agents.fact_about(F("Ian Thomas", "LV", "ruled out"), "JAX|brian thomas|WR", c)
+    assert not agents.fact_about(F("Allen", "BUF", "out"), "BUF|josh allen|QB", c)  # two Allens on BUF
+    assert agents.fact_about(F("Josh Allen (QB)", "BUF"), "BUF|josh allen|QB", c)
+    assert agents.fact_about(F("Shakir", "BUF"), "BUF|khalil shakir|WR", c)  # unique last name + team
+    assert agents.fact_about(F("Bills defense", "BUF"), "BUF|dst|DST", c)
+    assert agents.fact_about(F("BUF", "BUF"), "BUF|dst|DST", c)
+
+
+def test_says_out_ignores_negations_and_practice():
+    F = lambda text, status=None: Fact(id="F", subject="X", kind="status", text=text, status=status)
+    assert not agents.says_out(F("James Cook sat out Wednesday's practice but returned Friday and will play"))
+    assert not agents.says_out(F("Travis Kelce (ankle) is not ruled out and is expected to play"))
+    assert not agents.says_out(F("Doubtful with a hamstring"))
+    assert agents.says_out(F("Ruled out for Sunday (concussion)"))
+    assert agents.says_out(F("Skyy Moore (WR, GB): official report Out (Ankle); practice: DNP"))
+    assert agents.says_out(F("Placed on injured reserve Tuesday"))
+    assert agents.says_out(F("anything", status="inactive")) and not agents.says_out(F("ruled out", status="active"))
+
+
+def test_team_level_facts_cannot_cut_a_named_teammate():
+    c = _named_contest()
+    shakir_role = Fact(id="R1", subject="Khalil Shakir", team="BUF", kind="role", text="named full-time slot starter")
+    team_role = Fact(id="R2", subject="BUF", team="BUF", kind="role", text="new play-caller, more two-TE sets")
+    idx = {f.id: f for f in (shakir_role, team_role)}
+    assert agents._verified(["R1"], idx, "BUF|dalton kincaid|TE", c) == []
+    assert [f.id for f in agents._verified(["R2"], idx, "BUF|dalton kincaid|TE", c)] == ["R2"]
+
+
+def test_backup_removals_need_a_cited_out_fact():
+    c = _named_contest()
+    out = Fact(id="S1", subject="Josh Allen", team="BUF", kind="status", text="ruled out (concussion)", confidence="high")
+    pts = {k: 10.0 for k in c.players}
+    _, removed, rep = agents.apply_backup({"adjustments": [], "remove": [{"player_key": "BUF|khalil shakir|WR", "fact_ids": []},
+                                                                          {"player_key": "BUF|josh allen|QB", "fact_ids": ["S1"]}]},
+                                          {"S1": out}, c, pts)
+    assert removed == {"BUF|josh allen|QB"} and rep["rejected"][0]["remove"] == "BUF|khalil shakir|WR"
+    _, removed, _ = agents.apply_backup({"adjustments": [], "remove": ["BUF|khalil shakir|WR"]}, {}, c, pts)
+    assert removed == set()  # the old bare-string form never removes anyone
+
+
+def test_forecaster_sees_no_summary_urls_or_leaks():
+    d = GameDossier(game="A@B", summary="B favoured by 3.5; total 47.5", facts=[
+        Fact(id="A@B.F1", subject="X", team="A", kind="role", text="named starter", source_url="https://news.example/x"),
+        Fact(id="A@B.F2", subject="Y", team="A", kind="role", text="Y costs $7,800", source_url="https://news.example/y")])
+    t = agents.blinded_facts_text({"A@B": d})
+    assert "favoured" not in t and "https://" not in t and "$7,800" not in t and "named starter" in t
+
+
+def test_research_prompt_has_time_and_no_market():
+    from datetime import datetime, timezone
+    from tests.conftest import make_toy_contest
+    c, _ = make_toy_contest()
+    t = agents.research_tasks(c, {}, {g: "T01 favoured by 3" for g in c.games},
+                              now=datetime(2026, 10, 25, 14, 37, tzinfo=timezone.utc))[0]
+    assert "favoured" not in t.prompt and "As of: 2026-10-25 14:00 UTC" in t.prompt
+    r = AgentResult(name=f"research:{c.games[0]}", ok=True, output={"summary": "s", "ruled_out": [], "doubtful_or_questionable": [],
+        "facts": [{"subject": "X", "kind": "status", "text": "a", "as_of": "2026-10-26", "confidence": "high"},
+                  {"subject": "Y", "kind": "status", "text": "b", "as_of": "2026-10-24T18:00", "confidence": "high"}]})
+    d = agents.parse_research([r], now=datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc))
+    assert [f.subject for f in d[c.games[0]].facts] == ["Y"]  # the fact dated after the run's time is dropped
+
+
+def test_runner_survives_a_corrupt_cache_file(tmp_path):
+    be = FakeBackend({"strategist": lambda t: {"ok": 1}})
+    t = AgentTask(stage="strategist", name="s", system="x", prompt="p", schema={"type": "object"})
+    r = Runner(be, cache_dir=tmp_path)
+    (tmp_path / f"{t.cache_key()}.json").write_text('{"output": {"ok"')  # truncated write
+    res = asyncio.run(r.run(t))
+    assert res.ok and not res.cached and len(be.calls) == 1
+
+
+def test_grading_the_same_run_twice_counts_once(tmp_path):
+    errs = [{"position": "WR", "baseline_err": 3.0, "forecast_err": 1.0}] * 40
+    a = update_blend(tmp_path / "b.json", "nfl", errs, prior_weight=0.85, run_id="run1")
+    b = update_blend(tmp_path / "b.json", "nfl", errs, prior_weight=0.85, run_id="run1")
+    assert a["nfl"]["WR"]["n"] == b["nfl"]["WR"]["n"] == 40

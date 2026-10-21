@@ -139,7 +139,8 @@ def grade_lineup(contest: Contest, lineup: Lineup, actual: dict[str, float], *,
 
 # ----------------------------------------------------------------------------- learning the blend
 
-def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight: float, n0: float = 200.0) -> dict:
+def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight: float, n0: float = 200.0,
+                 run_id: str | None = None, week: tuple[int, int] | None = None) -> dict:
     """Learn the forecast's blend weight per position from graded player-games.
 
     ``errors`` rows: {"position", "baseline_err", "forecast_err"} (actual - projected). With
@@ -150,6 +151,13 @@ def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight:
     """
     path = Path(path)
     state = json.loads(path.read_text()) if path.exists() else {}
+    if run_id is not None:  # grading the same run again must not count its games twice
+        graded = state.setdefault("_graded_runs", [])
+        if run_id in graded:
+            return state
+        graded.append(run_id)
+    if week is not None and list(week) not in state.setdefault("_fit_weeks", []):
+        state["_fit_weeks"].append(list(week))  # runs of this week will not use these weights (no peeking)
     sp = state.setdefault(sport, {})
     by_pos: dict[str, list[dict]] = {}
     for e in errors:

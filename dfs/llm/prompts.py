@@ -23,11 +23,15 @@ Rules:
 - Every fact needs a source URL and the date/time the source gives. Never state a fact you did not read.
 - Report facts, not opinions or projections. No fantasy point predictions.
 - Mark confidence: high = official report or multiple reliable sources; medium = one reliable source; low = rumor.
+- For availability facts set status (out, inactive, injured_reserve, suspended, doubtful, questionable, probable,
+  active). The subject is the player's full name as listed on the slate, or the team code for team-level facts.
+- Use only information published before the "As of" time below; ignore anything dated later.
+- Do not report betting lines, odds, salaries or fantasy point projections.
 - The structured data block below is already known (from nflverse); do not re-search it. Focus on what is
   newer than it or missing from it."""
 
 RESEARCH_PROMPT = """Game: {game} ({kickoff})
-Market: {market}
+As of: {now}
 
 Known structured data (official injury report rows, depth chart, recent usage):
 {known}
@@ -47,8 +51,8 @@ Scoring (fantasy points):
 {scoring}
 
 How to forecast well:
-- Start from role and volume: snaps, routes, targets, carries, goal-line work, and the team's expected scoring
-  (betting market facts below). Then adjust for matchup, injuries around the player, game script and weather.
+- Start from role and volume: snaps, routes, targets, carries, goal-line work, and the team's expected scoring.
+  Then adjust for matchup, injuries around the player, game script and weather.
 - Shrink small samples toward role-based base rates; efficiency (yards per target, TD rate) is noisy, volume is sticky.
 - Fantasy points are right-skewed: high - likely is usually larger than likely - low. Touchdowns and yardage bonuses
   create the upper tail. A real 80% interval is wide: for a typical WR it often spans 15+ points.
@@ -58,6 +62,7 @@ How to forecast well:
 
 FORECAST_PROMPT = """Game: {game}
 Market facts: {market}
+(When this says "unknown", the market is hidden from you on purpose: forecast from role, usage and facts.)
 
 Research dossier (facts with ids):
 {facts}
@@ -106,8 +111,8 @@ Facts (ids usable as citations):
 
 BACKUP_SYSTEM = """You are the backup decision-maker on a DFS syndicate, running alongside the main review in case it
 fails. Unlike the main strategist, you MAY adjust a player's projected mean by a multiplier between 0.5 and 1.3,
-but only with fact ids and a one-sentence reason, and you may remove players who are not playing. Be conservative:
-most players need no adjustment."""
+but only with fact ids and a one-sentence reason, and you may remove players who are not playing (cite the fact ids
+that prove it; removals without them are ignored). Be conservative: most players need no adjustment."""
 
 BACKUP_PROMPT = STRATEGIST_PROMPT
 

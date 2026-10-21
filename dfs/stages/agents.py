@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from dfs.io.contest_file import norm_name
 from dfs.llm import prompts, schemas
@@ -19,9 +19,27 @@ from dfs.models import Contest, Fact, Forecast, GameDossier, Lineup
 from dfs.scoring import describe
 from dfs.sources import host_blocked
 
-OUT_WORDS = re.compile(r"\b(out|inactive|ruled out|injured reserve|\bIR\b|won't play|will not play|suspended|"
-                       r"placed on|doubtful|not expected to play|scratch)\b", re.I)
+# A fact says a player will not play: explicit phrases only (no bare "out", which also means
+# "sat out practice" or "not ruled out"), and never when negated just before.
+OUT_WORDS = re.compile(r"\b(ruled out|(?:listed|declared|designated|downgraded to|report(?: status)?)\s*:?\s*(?:as )?out\b|"
+                       r"(?:is|are|will be) out\b|out for (?:the )?(?:game|season|week|sunday|monday|thursday|saturday)|"
+                       r"inactive|injured reserve|placed on (?:ir|injured reserve|the reserve)|\bon ir\b|won't play|"
+                       r"will not play|suspended|not expected to play|scratched)", re.I)
+_NEGATED = re.compile(r"\b(not|no longer|n't|never|isn't|wasn't|avoid(?:ed)?|despite|sat|sitting|returned|"
+                      r"activated|removed from)\b[\w\s,'-]{0,24}$", re.I)
+OUT_STATUSES = {"out", "inactive", "injured_reserve", "suspended"}
 AVAILABILITY_KINDS = {"injury", "status", "role", "depth_chart", "usage", "coaching"}
+
+
+def says_out(fact: Fact) -> bool:
+    """The fact states the player will not play (structured status first, then explicit wording)."""
+    st = (getattr(fact, "status", None) or "").lower()
+    if st:
+        return st in OUT_STATUSES
+    for m in OUT_WORDS.finditer(fact.text or ""):
+        if not _NEGATED.search((fact.text or "")[:m.start()]):
+            return True
+    return False
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -39,40 +57,105 @@ def _key_team(player_key: str, contest: Contest | None) -> str | None:
     return player_key.split("|")[0].upper() if "|" in player_key else None
 
 
+_POS_WORDS = {"qb", "rb", "wr", "te", "k", "dst", "def", "fb", "pk"}
+
+
+def _subject_name(subject: str) -> str:
+    """'Josh Allen (QB, BUF)' / 'Josh Allen - QB' -> 'josh allen'."""
+    s = re.sub(r"\(.*?\)|\s[-–]\s.*$", " ", subject or "")
+    words = [w for w in norm_name(s).split() if w not in _POS_WORDS]
+    return " ".join(words)
+
+
+def same_team(a: str | None, b: str | None, sport: str | None = None) -> bool:
+    """Team codes from different sources (nflverse 'LA' vs DK 'LAR', 'JAC' vs 'JAX') compare equal."""
+    if not a or not b:
+        return False
+    a, b = a.strip().upper(), b.strip().upper()
+    if a == b:
+        return True
+    if (sport or "nfl") == "nfl":
+        from dfs.data.teams import canonicalize
+        return canonicalize(a, strict=False) == canonicalize(b, strict=False)
+    return False
+
+
+def _team_names(team: str, contest: Contest | None) -> set[str]:
+    names = {team.lower(), f"{team.lower()} dst", f"{team.lower()} defense", f"{team.lower()} offense"}
+    if contest is not None:
+        for k, p in contest.players.items():
+            if k.endswith("|DST") and same_team(p.team, team, contest.rules.sport):
+                n = norm_name(p.name)
+                names |= {n, f"{n} dst", f"{n} defense", f"{n} d st", f"{n} offense"}
+    return names
+
+
 def fact_about(fact: Fact, player_key: str, contest: Contest | None = None) -> bool:
-    """Does the fact name this player (full name, or last name + team)? DSTs match their team."""
-    subj = norm_name(fact.subject)
+    """Is the fact's subject this player? The exact name, or the bare last name when the fact names his
+    team and no teammate on the slate shares it. A team defense matches only facts about the team or
+    its defense. The fact's text is never used: a teammate's name in it proves nothing."""
+    subj = _subject_name(fact.subject)
     name = key_name(player_key, contest)
     team = _key_team(player_key, contest)
+    sport = contest.rules.sport if contest is not None else "nfl"
+    if fact.team and team and not same_team(fact.team, team, sport):
+        return False
     if name == "dst" or player_key.endswith("|DST"):
-        return bool(team and ((fact.team or "").upper() == team or subj == team.lower()))
+        return bool(team and subj and subj in _team_names(team, contest))
     if not subj or not name:
         return False
-    if subj == name or (len(subj) >= 5 and (name in subj or subj in name)):
+    if subj == name:
         return True
     last = name.split()[-1]
-    text = norm_name(fact.text)
-    return bool(team and fact.team and fact.team.upper() == team and len(last) >= 3
-                and (last in subj.split() or f" {last} " in f" {text} "))
+    if fact.team and len(last) >= 3 and subj in (last, f"{name[0]} {last}"):
+        mates = [k for k, p in (contest.players.items() if contest else [])
+                 if same_team(p.team, team, sport) and key_name(k, contest).split()[-1:] == [last]]
+        return len(mates) <= 1
+    return False
+
+
+def team_fact(fact: Fact, team: str | None, contest: Contest | None = None) -> bool:
+    """A fact about a team as a whole (its offense, staff, game plan), not about one named player."""
+    if not team or not same_team(fact.team, team, contest.rules.sport if contest else "nfl"):
+        return False
+    subj = _subject_name(fact.subject)
+    return subj in _team_names(team, contest) or subj in {"game", "team", "offense", "coaching staff", "staff"}
 
 
 def fact_index(dossiers: dict[str, GameDossier]) -> dict[str, Fact]:
     return {f.id: f for d in dossiers.values() for f in d.facts}
 
 
-def facts_text(dossiers: dict[str, GameDossier], games: list[str] | None = None, max_chars: int = 40000) -> str:
+def facts_text(dossiers: dict[str, GameDossier], games: list[str] | None = None, max_chars: int = 60000) -> str:
+    """Facts for the reviewers (strategist, checker, backup). Long slates are trimmed per game, never by
+    cutting whole games off the end."""
+    sel = [(g, d) for g, d in dossiers.items() if not games or g in games]
+    per_game = max_chars // max(len(sel), 1)
+    out = []
+    for g, d in sel:
+        block = [f"## {g}: {d.summary}"]
+        if d.ruled_out:
+            block.append(f"   ruled out: {', '.join(d.ruled_out)}")
+        for f in d.facts:
+            block.append(f"[{f.id}] ({f.kind}, {f.confidence}) {f.subject}: {f.text}"
+                         + (f" <{f.source_url}>" if f.source_url else ""))
+        text = "\n".join(block)
+        out.append(text if len(text) <= per_game else text[:per_game] + "\n...(this game's facts trimmed)")
+    return "\n".join(out)
+
+
+def blinded_facts_text(dossiers: dict[str, GameDossier]) -> str:
+    """Facts for the blinded forecaster: only fact ids, kind, subject and text that pass the blind.
+    No research summary (it may repeat a line or a price) and no source URLs."""
+    from dfs.sources import blind_text
     out = []
     for g, d in dossiers.items():
-        if games and g not in games:
-            continue
-        out.append(f"## {g}: {d.summary}")
+        rows = [f"[{f.id}] ({f.kind}, {f.confidence}) {f.subject}: {f.text}" for f in d.facts
+                if f.kind != "line" and blind_text(f"{f.subject} {f.text}") is not None]
         if d.ruled_out:
-            out.append(f"   ruled out: {', '.join(d.ruled_out)}")
-        for f in d.facts:
-            out.append(f"[{f.id}] ({f.kind}, {f.confidence}) {f.subject}: {f.text}"
-                       + (f" <{f.source_url}>" if f.source_url else ""))
-    text = "\n".join(out)
-    return text if len(text) <= max_chars else text[:max_chars] + "\n...(truncated)"
+            rows.insert(0, f"   ruled out: {', '.join(n for n in d.ruled_out if blind_text(n) is not None)}")
+        out.append(f"## {g}\n" + "\n".join(rows))
+    return "\n".join(out)
 
 
 def _players_of_game(contest: Contest, game: str, keys: set[str] | None = None) -> list[str]:
@@ -82,7 +165,10 @@ def _players_of_game(contest: Contest, game: str, keys: set[str] | None = None) 
 # ----------------------------------------------------------------------------- research
 
 def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, str], *, model: str = "sonnet",
-                   max_searches: int = 8, timeout_s: float = 900) -> list[AgentTask]:
+                   max_searches: int = 8, timeout_s: float = 900, now: datetime | None = None) -> list[AgentTask]:
+    """One research agent per game. ``now`` (to the hour) is in the prompt: it tells the agent what is
+    current, and a re-run hours later gets fresh research instead of the cached answer."""
+    asof = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:00 UTC")
     tasks = []
     for g in contest.games:
         players = [contest.players[k] for k in _players_of_game(contest, g)]
@@ -92,13 +178,27 @@ def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, st
         tasks.append(AgentTask(
             stage="research", name=f"research:{g}", model=model, tools=["WebSearch", "WebFetch"],
             system=prompts.RESEARCH_SYSTEM.format(max_searches=max_searches),
-            prompt=prompts.RESEARCH_PROMPT.format(game=g, kickoff=kickoff, market=market.get(g, "unknown"),
+            prompt=prompts.RESEARCH_PROMPT.format(game=g, kickoff=kickoff, now=asof,
                                                   known=known.get(g, "(none)"), roster=roster),
             schema=schemas.RESEARCH, max_turns=max_searches * 2 + 6, timeout_s=timeout_s))
     return tasks
 
 
-def parse_research(results: list[AgentResult]) -> dict[str, GameDossier]:
+def _after(as_of: str | None, now: datetime | None) -> bool:
+    """True when the fact's stated date is later than ``now`` (a past-slate run must not see the future)."""
+    if not as_of or now is None:
+        return False
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", as_of)
+    if not m:
+        return False
+    try:
+        d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    except ValueError:
+        return False
+    return d > now.astimezone(timezone.utc).date()
+
+
+def parse_research(results: list[AgentResult], now: datetime | None = None) -> dict[str, GameDossier]:
     out: dict[str, GameDossier] = {}
     for r in results:
         if not r.ok or not r.output:
@@ -109,9 +209,11 @@ def parse_research(results: list[AgentResult]) -> dict[str, GameDossier]:
         for i, f in enumerate(o.get("facts", []), 1):
             if host_blocked(f.get("source_url")):
                 continue  # never carry facts lifted from DFS sites or no-automation sources
+            if _after(f.get("as_of"), now):
+                continue  # dated after the run's time
             facts.append(Fact(id=f"{g}.F{i}", subject=f.get("subject", ""), team=f.get("team"), kind=f.get("kind", "other"),
                               text=f.get("text", ""), source_url=f.get("source_url"), as_of=f.get("as_of"),
-                              confidence=f.get("confidence", "medium")))
+                              confidence=f.get("confidence", "medium"), status=f.get("status")))
         out[g] = GameDossier(game=g, summary=o.get("summary", ""), facts=facts, ruled_out=o.get("ruled_out", []),
                              doubtful_or_questionable=o.get("doubtful_or_questionable", []), weather=o.get("weather"))
     return out
@@ -143,7 +245,7 @@ def forecast_tasks(contest: Contest, dossiers: dict[str, GameDossier], usage: di
             stage="forecast", name=f"forecast:{g}", model=model, tools=[],
             system=prompts.FORECAST_SYSTEM.format(scoring=scoring),
             prompt=prompts.FORECAST_PROMPT.format(game=g, market=market.get(g, "unknown"),
-                                                  facts=facts_text(d) or "(no research facts)",
+                                                  facts=blinded_facts_text(d) or "(no research facts)",
                                                   usage=usage.get(g, "(none)"), players=lines),
             schema=schemas.FORECAST, max_turns=4, timeout_s=timeout_s))
     return tasks
@@ -181,8 +283,14 @@ def lineup_text(contest: Contest, lu: Lineup, projections: dict | None = None) -
         "".join(f", {k} {v:.3g}" for k, v in lu.metrics.items() if k != "optimal")
 
 
+def _games_of(contest: Contest, lineups: list[Lineup]) -> list[str]:
+    return sorted({contest.players[s.player_key].game for lu in lineups for s in lu.slots
+                   if contest.players[s.player_key].game})
+
+
 def strategist_task(contest: Contest, drafts: list[Lineup], top3: str, dossiers: dict[str, GameDossier],
-                    projections: dict, objective: str, *, model: str = "opus", backup: bool = False) -> AgentTask:
+                    projections: dict, objective: str, *, model: str = "opus", backup: bool = False,
+                    timeout_s: float = 900) -> AgentTask:
     r = contest.rules
     system = (prompts.BACKUP_SYSTEM if backup else prompts.STRATEGIST_SYSTEM.format(
         site=r.site.value, sport=r.sport.upper(), game_type=r.game_type, kind=contest.kind.value))
@@ -193,7 +301,7 @@ def strategist_task(contest: Contest, drafts: list[Lineup], top3: str, dossiers:
         top3=top3, facts=facts_text(dossiers))
     return AgentTask(stage="backup" if backup else "strategist", name="backup" if backup else "strategist",
                      model=model, tools=[], system=system, prompt=prompt,
-                     schema=schemas.BACKUP if backup else schemas.STRATEGIST, max_turns=4, timeout_s=900)
+                     schema=schemas.BACKUP if backup else schemas.STRATEGIST, max_turns=4, timeout_s=timeout_s)
 
 
 def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Contest,
@@ -204,8 +312,7 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
         f = idx.get(fid)
         if f is None or f.kind not in kinds or f.confidence == "low":
             continue
-        if fact_about(f, key, contest) or (team and f.team and f.team.upper() == team.upper()
-                                            and f.kind in ("role", "depth_chart", "coaching")):
+        if fact_about(f, key, contest) or (f.kind in ("role", "depth_chart", "coaching") and team_fact(f, team, contest)):
             good.append(f)
     return good
 
@@ -213,7 +320,7 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
 def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[str]:
     out = set()
     for d in dossiers.values():
-        names = {norm_name(n) for n in d.ruled_out}
+        names = {_subject_name(n) for n in d.ruled_out}  # 'Josh Allen (concussion)' -> 'josh allen'
         for k in _players_of_game(contest, d.game):
             if key_name(k, contest) in names:
                 out.add(k)
@@ -221,7 +328,7 @@ def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[st
 
 
 def _hard_out(facts: list[Fact]) -> bool:
-    return any(f.kind in ("injury", "status") and OUT_WORDS.search(f.text) for f in facts)
+    return any(f.kind in ("injury", "status") and says_out(f) for f in facts)
 
 
 def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
@@ -239,7 +346,7 @@ def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
     for item in output.get("remove_not_playing", []):
         k = item.get("player_key")
         facts = _verified(item.get("fact_ids", []), {i: f for i, f in idx.items()}, k, contest, {"injury", "status"})
-        if k in contest.players and (k in out_keys or any(OUT_WORDS.search(f.text) for f in facts)):
+        if k in contest.players and (k in out_keys or any(says_out(f) for f in facts)):
             excluded.add(k)
             report["accepted"].append({"remove": k, "facts": [f.id for f in facts]})
         else:
@@ -259,14 +366,15 @@ def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
 
 
 def checker_task(contest: Contest, lu: Lineup, dossiers: dict[str, GameDossier], projections: dict,
-                 *, model: str = "opus", attempt: int = 0) -> AgentTask:
+                 *, model: str = "opus", attempt: int = 0, timeout_s: float = 900) -> AgentTask:
     r = contest.rules
     return AgentTask(stage="checker", name=f"checker:{attempt}", model=model, tools=[],
                      system=prompts.CHECKER_SYSTEM,
                      prompt=prompts.CHECKER_PROMPT.format(
                          contest=f"{r.site.value} {r.sport} {r.game_type} ({contest.kind.value})",
-                         lineup=lineup_text(contest, lu, projections), facts=facts_text(dossiers)),
-                     schema=schemas.CHECKER, max_turns=4, timeout_s=900)
+                         lineup=lineup_text(contest, lu, projections),
+                         facts=facts_text(dossiers, games=_games_of(contest, [lu]))),
+                     schema=schemas.CHECKER, max_turns=4, timeout_s=timeout_s)
 
 
 def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Lineup,
@@ -306,10 +414,17 @@ def apply_backup(output: dict, idx: dict[str, Fact], contest: Contest, points: d
         m = min(max(float(a.get("multiplier", 1.0)), 0.5), 1.3)
         new[k] *= m
         applied.append({"player": k, "multiplier": m, "facts": [f.id for f in facts], "reason": a.get("reason")})
-    for k in output.get("remove", []):
-        if k in new:
+    rejected = []
+    for item in output.get("remove", []):  # a removal needs a verified not-playing fact, like the strategist's
+        k = item.get("player_key") if isinstance(item, dict) else item
+        facts = _verified(item.get("fact_ids", []) if isinstance(item, dict) else [], idx, k, contest,
+                          {"injury", "status"}) if k in new else []
+        if k in new and any(says_out(f) for f in facts):
             removed.add(k)
-    return new, removed, {"applied": applied, "removed": sorted(removed), "notes": output.get("notes")}
+        elif k:
+            rejected.append({"remove": k, "why": "no verified not-playing fact"})
+    return new, removed, {"applied": applied, "removed": sorted(removed), "rejected": rejected,
+                          "notes": output.get("notes")}
 
 
 # ----------------------------------------------------------------------------- last hour

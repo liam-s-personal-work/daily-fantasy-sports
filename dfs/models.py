@@ -131,6 +131,7 @@ class Fact(BaseModel):
     source_url: str | None = None
     as_of: str | None = None
     confidence: str = "medium"  # high | medium | low
+    status: str | None = None  # availability, when the fact states it: out | inactive | injured_reserve | ...
 
 
 class GameDossier(BaseModel):

@@ -24,7 +24,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -112,6 +112,7 @@ class RunConfig:
     replay_only: bool = False
     forecast_weight_override: float | None = None
     provider: str | None = None  # force "generic" (CSV averages only) instead of the sport's data provider
+    allow_lookahead: bool = False  # past-slate runs (now well before the real clock) turn web research off unless set
 
 
 @dataclass
@@ -256,11 +257,17 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
     # 3. research
     dossiers: dict[str, GameDossier] = {}
-    if cfg.web_research:
+    web = cfg.web_research
+    if web and now is not None and now < datetime.now(timezone.utc) - timedelta(minutes=15) and not cfg.allow_lookahead:
+        # a run "as of" a past time would search today's web, which reports the games' results
+        log("WARNING: --now is in the past, so web research is off (it would surface the results); "
+            "pass --allow-lookahead to override")
+        web = False
+    if web:
         tasks = agents.research_tasks(contest, ctx.known, ctx.market, model=cfg.research_model,
                                       max_searches=cfg.max_searches_per_game,
-                                      timeout_s=max(120.0, min(900.0, clock.left() * 0.25)))
-        dossiers = agents.parse_research(await runner.run_all(tasks))
+                                      timeout_s=max(120.0, min(900.0, clock.left() * 0.25)), now=t_now)
+        dossiers = agents.parse_research(await runner.run_all(tasks), now=t_now)
     for g in contest.games:  # structured facts always join the dossier (and stand in when research failed)
         sfacts = ctx.structured_facts.get(g, [])
         if g in dossiers:
@@ -282,13 +289,25 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
         priced = {f.id for d in blinded.values() for f in d.facts}
         ftasks = agents.forecast_tasks(contest, blinded, ctx.usage, {}, pool - out_keys, model=cfg.forecast_model,
                                        timeout_s=max(120.0, min(900.0, clock.left() * 0.3)))
-        forecasts, problems = agents.parse_forecasts(await runner.run_all(ftasks), set(contest.players))
+        fres = await runner.run_all(ftasks)
+        forecasts, problems = agents.parse_forecasts(fres, set(contest.players))
         for p in problems:
             log(f"forecast issue: {p}")
+        # The novelty rule only counts a fact as priced in where the forecaster actually ran
+        done = {r.name.split(":", 1)[1] for r in fres if r.ok}
+        priced = {f.id for g, d in blinded.items() if g in done for f in d.facts}
     _save(run_dir, "forecasts.json", forecasts)
     learned = blend_mod.load_learned(cfg.learned_blend)
-    baseline = {k: v for k, v in ctx.baseline.items() if k not in out_keys}
     calib = blend_mod.load_calibration(cfg.calibration) if cfg.calibration else {}
+    for name, table in (("blend weights", learned), ("calibration", calib)):
+        fit = {tuple(w) for w in (table.get("_fit_weeks") or [])}
+        if ctx.season and ctx.week and (ctx.season, ctx.week) in fit:  # never grade a week on numbers fit to it
+            log(f"WARNING: learned {name} were fit on {ctx.season} week {ctx.week}; using the priors instead")
+            if name == "blend weights":
+                learned = {}
+            else:
+                calib = {}
+    baseline = {k: v for k, v in ctx.baseline.items() if k not in out_keys}
     projections = blend_mod.blend(baseline, {k: v for k, v in forecasts.items() if k not in out_keys},
                                   contest.players, sport, learned=learned, calib=calib,
                                   weight_override=cfg.forecast_weight_override)
@@ -297,11 +316,18 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
     # 7-11. decide (simulate, drafts, strategist/backup, solve, checker loop, user rules)
     decider = Decider(contest, projections, cfg, runner, dossiers, log=log, n_lineups=max(1, len(contest.entries)),
-                      now=now or datetime.now(timezone.utc), priced=priced if forecasts else set())
+                      now=now or datetime.now(timezone.utc), priced=priced if forecasts else set(), clock=clock)
     decision = await decider.decide()
     clock.mark(f"decision: {decision.final.label} mean {decision.final.mean:.1f}")
 
-    # 12. outputs
+    # 12. outputs: every lineup passes the independent legality check before it is written
+    for i, lu in enumerate(decision.lineups):
+        bad = check_legal(contest, lu)
+        if bad:
+            raise Infeasible(f"lineup for entry {i + 1} failed the legality check: {bad}")
+    if decision.rules_lineup is not None and check_legal(contest, decision.rules_lineup):
+        decision.report["user_rules_error"] = f"rules lineup failed the legality check: {check_legal(contest, decision.rules_lineup)}"
+        decision.rules_lineup = None
     upload = write_upload(contest, decision.lineups, run_dir / "upload.csv", only_changed=False,
                           entry_ids=decision.entry_ids, started_ids=started_ids(contest, t_now))
     rules_upload = None

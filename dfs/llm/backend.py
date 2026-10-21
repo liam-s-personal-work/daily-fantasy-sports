@@ -18,7 +18,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import replace, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -156,6 +156,11 @@ class FakeBackend:
             return AgentResult(name=task.name, output=None, ok=False, error=repr(e))
 
 
+# What one task of each stage usually costs (USD); reserved against the run budget while it runs, so
+# tasks started side by side cannot overshoot it together.
+STAGE_COST_EST = {"research": 0.35, "forecast": 0.35, "strategist": 0.2, "backup": 0.08, "checker": 0.15, "news": 0.2}
+
+
 class Runner:
     """Cache + budget + concurrency + timeout + retry around a backend; logs every call."""
 
@@ -168,6 +173,7 @@ class Runner:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.budget_usd = budget_usd
         self.spent_usd = 0.0
+        self.reserved_usd = 0.0
         self.sem = asyncio.Semaphore(concurrency)
         self.replay_only = replay_only
         self.retries = retries
@@ -180,10 +186,13 @@ class Runner:
     async def run(self, task: AgentTask) -> AgentResult:
         path = self._cache_path(task) if task.cacheable else None
         if path and path.exists():
-            data = json.loads(path.read_text())
-            res = AgentResult(name=task.name, output=data["output"], ok=True, cached=True)
-            self.ledger.append(res)
-            return res
+            try:
+                data = json.loads(path.read_text())
+                res = AgentResult(name=task.name, output=data["output"], ok=True, cached=True)
+                self.ledger.append(res)
+                return res
+            except (ValueError, KeyError):  # a truncated or corrupt cache file is a miss, not a crash
+                path.unlink(missing_ok=True)
         if self.replay_only:
             res = AgentResult(name=task.name, output=None, ok=False, error="replay-only: not cached")
             self.ledger.append(res)
@@ -191,22 +200,33 @@ class Runner:
         res = AgentResult(name=task.name, output=None, ok=False, error="not run")
         async with self.sem:
             for attempt in range(self.retries + 1):
-                if self.spent_usd >= self.budget_usd:
+                est = task.max_budget_usd or STAGE_COST_EST.get(task.stage, 0.3)
+                left = self.budget_usd - self.spent_usd - self.reserved_usd
+                if left < min(est, 0.05) or left <= 0:
                     res = AgentResult(name=task.name, output=None, ok=False, error="run budget exhausted")
                     break
+                self.reserved_usd += est
+                # the SDK stops the task itself if it would spend more than what is left of the run budget
+                capped = replace(task, max_budget_usd=round(min(task.max_budget_usd or left, left), 4))
                 try:
-                    res = await asyncio.wait_for(self.backend.run(task), timeout=task.timeout_s)
+                    res = await asyncio.wait_for(self.backend.run(capped), timeout=task.timeout_s)
                 except asyncio.TimeoutError:
                     res = AgentResult(name=task.name, output=None, ok=False, error=f"timeout {task.timeout_s}s")
                 except Exception as e:
                     res = AgentResult(name=task.name, output=None, ok=False, error=repr(e))
+                finally:
+                    self.reserved_usd -= est
                 self.spent_usd += res.cost_usd
                 if res.ok:
                     break
                 self.log(f"[llm] {task.name} attempt {attempt + 1} failed: {res.error}")
+                if (res.error or "").startswith("timeout"):
+                    break  # a timed-out task is not retried: it would spend the run's time a second time
         if res.ok and path:
-            path.write_text(json.dumps({"task": task.name, "stage": task.stage, "output": res.output,
-                                        "cost_usd": res.cost_usd, "seconds": res.seconds}, indent=1))
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps({"task": task.name, "stage": task.stage, "output": res.output,
+                                       "cost_usd": res.cost_usd, "seconds": res.seconds}, indent=1))
+            os.replace(tmp, path)
         self.log(f"[llm] {task.name}: {'ok' if res.ok else 'FAILED'} ${res.cost_usd:.3f} {res.seconds:.0f}s"
                  f" searches={res.web_searches} (run total ${self.spent_usd:.2f})")
         self.ledger.append(res)

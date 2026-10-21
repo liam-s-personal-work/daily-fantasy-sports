@@ -200,9 +200,9 @@ def test_lastcall_reforecast_keeps_the_blind(cfg):
         g = t.name.split(":", 1)[1]
         p = next(x for x in c.players.values() if x.game == g and x.positions[0] == "WR")
         facts = [{"subject": p.name, "team": p.team, "kind": "role", "text": f"{p.name} at a $7,800 salary is chalk",
-                  "source_url": "https://www.nfl.com/a", "as_of": "2026-10-24", "confidence": "high"},
+                  "source_url": "https://www.nfl.com/a", "as_of": "2026-10-20", "confidence": "high"},
                  {"subject": p.name, "team": p.team, "kind": "role", "text": f"{p.name} named the slot starter",
-                  "source_url": "https://www.nfl.com/b", "as_of": "2026-10-24", "confidence": "high"}]
+                  "source_url": "https://www.nfl.com/b", "as_of": "2026-10-20", "confidence": "high"}]
         return {"game": g, "summary": "s", "facts": facts, "ruled_out": [], "doubtful_or_questionable": []}
 
     be = fake()
@@ -289,3 +289,31 @@ def test_mixed_cash_and_tournament_entries_get_their_own_objective(cfg):
     assert res.report["decision"]["entries"]["mixed_contest_kinds"] is True
     for lu in res.report["lineups"]:
         assert check_legal(res.contest, lu) == []
+
+
+def test_checker_failures_after_two_revisions_stay_excluded(cfg):
+    import re as _re
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+
+    def research(t):  # every QB is reported ruled out by an official source
+        g = t.name.split(":", 1)[1]
+        facts = [{"subject": p.name, "team": p.team, "kind": "status", "status": "out", "text": f"{p.name} ruled out",
+                  "source_url": "https://www.nfl.com/injuries", "as_of": "2026-10-20", "confidence": "high"}
+                 for p in c.players.values() if p.game == g and p.positions == ["QB"]]
+        return {"game": g, "summary": "s", "facts": facts, "ruled_out": [], "doubtful_or_questionable": []}
+
+    failed = []
+
+    def checker(t):  # fail the lineup's QB, citing the fact about him
+        qb_key = _re.search(r"- QB: (.+?) \(", t.prompt).group(1)
+        name = c.players[qb_key].name
+        fid = _re.search(r"\[(\S+)\] \(status, high\) " + _re.escape(name) + ":", t.prompt).group(1)
+        failed.append(qb_key)
+        return {"attacks": [{"player_key": qb_key, "claim": "not_playing", "severity": "blocker", "fact_ids": [fid],
+                             "argument": "ruled out"}]}
+
+    be = fake(checker=checker)
+    be.handlers["research"] = research
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=be, log=lambda s: None)
+    assert len(failed) == 3 and res.report["decision"].get("used_backup") is True
+    assert not set(failed) & set(res.final.player_keys)  # the third verified failure is excluded too

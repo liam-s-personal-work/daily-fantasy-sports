@@ -50,5 +50,24 @@
    "weight": 0.7533,
    "mae_note": "weights are learned on graded 2026 games only (after the model's training cutoff)"
   }
- }
+ },
+ "_fit_weeks": [
+  [
+   2026,
+   3
+  ],
+  [
+   2026,
+   4
+  ],
+  [
+   2026,
+   5
+  ],
+  [
+   2026,
+   6
+  ]
+ ],
+ "_source": "encompassing regression on the blinded forecaster experiment, 2026 weeks 3-6 (docs/results/forecast_experiment_2026_wk3-6_blind_rescored.md), shrunk toward the 0.85 prior"
 }

@@ -33,9 +33,15 @@ REGISTER: dict[str, dict] = {
     "fanduel": {"status": "PROHIBITED", "terms": "user downloads/uploads CSVs by hand; no automation of the site", "url": "https://www.fanduel.com"},
 }
 
-# Facts sourced from these hosts are dropped (DFS sites, paywalled or no-automation sites).
+# Facts sourced from these hosts are dropped: DFS and pick'em operators, paywalled projection sites,
+# odds and betting sites, and sites that forbid automated access.
 BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|dkapi|rotowire\.com|fantasypros\.com|"
-                           r"sports-reference\.com|pro-football-reference\.com|stathead\.com)$", re.I)
+                           r"sports-reference\.com|pro-football-reference\.com|stathead\.com|prizepicks\.com|"
+                           r"underdogfantasy\.com|numberfire\.com|rotogrinders\.com|4for4\.com|actionnetwork\.com|"
+                           r"covers\.com|vegasinsider\.com|oddsshark\.com|sportsline\.com|betmgm\.com|caesars\.com|"
+                           r"williamhill\.com|pointsbet\.com|bet365\.com|betrivers\.com|fanatics\.com|espnbet\.com|"
+                           r"sleeper\.com|dailyfantasyfuel\.com|fantasylabs\.com|establishtherun\.com|stokastic\.com)$", re.I)
+BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy-projections)(/|$|-)", re.I)
 
 
 # Page fetches agents may make (everything else is denied by the SDK permission layer).
@@ -60,20 +66,32 @@ def require(source_id: str) -> None:
 def host_blocked(url: str | None) -> bool:
     if not url:
         return False
-    host = urlparse(url if "://" in url else f"https://{url}").hostname or ""
-    return bool(BLOCKED_HOSTS.search(host))
+    u = urlparse(url if "://" in url else f"https://{url}")
+    return bool(BLOCKED_HOSTS.search(u.hostname or "") or BLOCKED_PATHS.search(u.path or ""))
 
 
 # --------------------------------------------------------------------------- forecaster blind
 
+_SIGN = r"[+\-−–]"  # plus, hyphen-minus, minus sign, en dash
 _LEAKS = [
-    re.compile(r"\$\s?\d"),  # prices / salaries
-    re.compile(r"\bsalar(y|ies)\b", re.I),
-    re.compile(r"\b(spread|over/under|o/u|moneyline|implied (team )?total|point total|vegas)\b", re.I),
-    re.compile(r"(?<![\w.])[+-]\d{3}\b"),  # American odds
+    # prices and salaries
+    re.compile(r"\$\s?\d"),
+    re.compile(r"\b(salar(y|ies)|priced at|price tag|costs? \d|\d{1,2}(\.\d)?k\b)", re.I),
+    re.compile(r"\b(draftkings|fanduel|dk|fd|prizepicks|underdog)\b", re.I),
+    re.compile(r"(avg ?points ?per ?game|site average|points per game average)", re.I),
+    # betting markets
+    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied (team )?total|point total|team total|"
+               r"game total|vegas|sportsbooks?|oddsmakers?|bookmakers?|books? (have|has|make)|props?\b|"
+               r"(laying|giving|getting) \d|by \d{1,2}(\.5)? points|totals? (of|is|at|sits at|:)\s*\d{2})", re.I),
+    re.compile(rf"(?<![\w.]){_SIGN}\d{{3}}\b"),  # American odds
     re.compile(r"\b(favou?rites?|underdogs?|favou?red by|dogs? of|line (moved|movement)|odds)\b", re.I),
-    re.compile(r"(?<![\w.])[+-]\d{1,2}(\.5)?(?![\w.%])"),  # spreads like -3.5 / +7
-    re.compile(r"\b(fantasy points?|fpts|fppg|dk points|fd points|ppr points|projected .{0,20}points|ownership)\b", re.I),
+    re.compile(rf"(?<![\w.]){_SIGN}\d{{1,2}}(\.5)?(?![\w.%])"),  # spreads like -3.5 / +7 / -2.5 with a minus sign
+    re.compile(r"\b(over|under) \d{1,3}\.5\b", re.I),  # "over 7.5 receptions", "under 42.5"
+    # fantasy points, projections, ownership and DFS advice
+    re.compile(r"\b(fantasy points?|fpts|fppg|ppg|dk points|fd points|ppr|half-ppr|fp|pts|projected .{0,20}points|"
+               r"projections?|expected to score|ownership|rostership|\d+(\.\d)?% owned|owned at|chalk|value play|smash|must[- ]start|"
+               r"start/sit|start or sit|sleepers?|dfs|gpp|cash games?)\b", re.I),
+    re.compile(r"\b(low|mid|high)-end (qb|rb|wr|te)\d\b|\b(qb|rb|wr|te)\d{2}\b|\btop-\d{1,2} (option|play|finish)", re.I),
 ]
 
 

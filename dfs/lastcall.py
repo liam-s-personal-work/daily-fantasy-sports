@@ -197,9 +197,10 @@ def kickoff_windows(run_dir: Path, lead_minutes: int = 60) -> list[dict[str, Any
     st = load_run(run_dir)
     c: Contest = st["contest"]
     by_time: dict[datetime, list[str]] = {}
-    for s in st["final"].slots:
-        t = c.players[s.player_key].start_time
-        if t is not None:
-            by_time.setdefault(t, []).append(c.players[s.player_key].name)
+    lineups = [st["final"]] + [Lineup.model_validate(x) for x in st["report"].get("lineups") or []]
+    for k in dict.fromkeys(s.player_key for lu in lineups for s in lu.slots):  # picks in every entry
+        t = c.players[k].start_time
+        if t is not None and t.year > 1970:
+            by_time.setdefault(t, []).append(c.players[k].name)
     return [{"kickoff": t.isoformat(), "run_lastcall_at": (t - timedelta(minutes=lead_minutes)).isoformat(),
              "picks": names} for t, names in sorted(by_time.items())]

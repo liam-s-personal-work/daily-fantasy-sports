@@ -26,7 +26,7 @@ from dfs.lastcall import load_run
 from dfs.models import Contest, Lineup, Projection
 from dfs.optimize.ilp import Infeasible, SolveOptions, lineup_points, solve
 
-LEARNED = Path("data/learned")
+from dfs.blend import LEARNED_DIR as LEARNED  # the same files the pipeline reads, whatever the cwd
 
 
 def nfl_actuals(contest: Contest, ids: dict[str, str], season: int, week: int) -> dict[str, float]:
@@ -158,8 +158,14 @@ def grade_run(run_dir: Path, standings: str | None = None, update: bool = True,
                 for r in rows if r["baseline"] is not None and r["forecast"] is not None]
         if errs:
             from dfs.blend import PRIOR_FORECAST_WEIGHT
-            update_blend(learned_dir / "blend.json", c.rules.sport, errs,
-                         prior_weight=PRIOR_FORECAST_WEIGHT.get(c.rules.sport, 0.0))
-            res["blend_updated_with"] = len(errs)
+            before = json.loads((learned_dir / "blend.json").read_text()) if (learned_dir / "blend.json").exists() else {}
+            st2 = update_blend(learned_dir / "blend.json", c.rules.sport, errs,
+                               prior_weight=PRIOR_FORECAST_WEIGHT.get(c.rules.sport, 0.0), run_id=run_dir.name,
+                               week=(int(base["season"]), int(base["week"])) if base.get("season") and base.get("week") else None)
+            if run_dir.name in (before.get("_graded_runs") or []):
+                res["blend_updated_with"] = 0
+                res["notes"] = list(res.get("notes") or []) + ["blend weights already include this run; not counted twice"]
+            else:
+                res["blend_updated_with"] = len(errs)
     (run_dir / "grade.json").write_text(json.dumps(res, indent=1, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o)))
     return res
