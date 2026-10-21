@@ -1,37 +1,36 @@
 {
  "nfl": {
+  "default": {
+   "low_scale": 1.0,
+   "high_scale": 1.37,
+   "n": 1337
+  },
   "DST": {
-   "low_scale": 0.714,
-   "high_scale": 1.154,
-   "n": 91
+   "low_scale": 0.67,
+   "high_scale": 1.16,
+   "n": 93
   },
   "QB": {
    "low_scale": 0.8,
-   "high_scale": 1.374,
-   "n": 135
+   "high_scale": 1.38,
+   "n": 138
   },
   "RB": {
    "low_scale": 1.0,
-   "high_scale": 1.261,
-   "n": 315
+   "high_scale": 1.39,
+   "n": 314
   },
   "TE": {
    "low_scale": 1.0,
-   "high_scale": 1.417,
+   "high_scale": 1.43,
    "n": 240
   },
   "WR": {
    "low_scale": 1.0,
-   "high_scale": 1.368,
-   "n": 544
-  },
-  "default": {
-   "low_scale": 1.0,
-   "high_scale": 1.343,
-   "n": 1325
+   "high_scale": 1.35,
+   "n": 552
   }
  },
- "_source": "fit on 2026 NFL weeks 3-6 graded forecasts (docs/results/forecast_experiment_2026_wk3-6_blind.md); refit as more weeks are graded",
  "_fit_weeks": [
   [
    2026,
@@ -49,5 +48,6 @@
    2026,
    6
   ]
- ]
+ ],
+ "_source": "fit on docs/results/forecast_experiment_2026_wk3-6_blind.csv (players who played)"
 }
