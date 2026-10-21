@@ -39,6 +39,7 @@ class SlateContext:
     ids: dict[str, str] = field(default_factory=dict)  # player_key -> stats-source id (for grading)
     season: int | None = None
     week: int | None = None
+    kickoffs: dict[str, datetime] = field(default_factory=dict)  # contest game label -> kickoff (UTC)
 
 
 def status_out(status: str | None) -> bool:

@@ -212,6 +212,17 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
                                      "week": ctx.week, "ids": ctx.ids, "ruled_out": ctx.ruled_out,
                                      "projections": ctx.baseline, "market": ctx.market, "usage": ctx.usage})
     clock.mark(f"baseline ({ctx.data_source}): {len(ctx.baseline)} players, {len(ctx.ruled_out)} ruled out")
+    if ctx.kickoffs and any(p.start_time is None for p in contest.players.values()):
+        # FD files have no kickoff times; late swap and the last-call windows need them
+        for p in contest.players.values():
+            if p.start_time is None and p.game in ctx.kickoffs:
+                p.start_time = ctx.kickoffs[p.game]
+        _save(run_dir, "contest.json", contest)
+        started = {k for k, p in contest.players.items() if p.start_time and p.start_time <= t_now}
+        if len(started) == len(contest.players):
+            raise SlateStarted(f"every game in this file has already started (now {t_now:%Y-%m-%d %H:%M %Z}); "
+                               "nothing can be entered or swapped. To test on a past slate, pass --now with a "
+                               "time before its first kickoff.")
     try:  # a legal safety lineup within the first minutes, in case anything later fails or runs long
         safety = safety_lineups(contest, {k: p.mean for k, p in ctx.baseline.items() if k not in ctx.ruled_out},
                                 started)

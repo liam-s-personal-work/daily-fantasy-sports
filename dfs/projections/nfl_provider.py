@@ -62,6 +62,24 @@ def infer_week(contest: Contest, schedules: pd.DataFrame, season: int | None = N
     return max(votes.items(), key=lambda kv: kv[1])[0]
 
 
+def kickoffs(contest: Contest, data: NFLData, season: int, week: int) -> dict[str, datetime]:
+    """Kickoff (UTC) of each contest game from the schedule; FD files carry no times, and late swap needs them."""
+    from zoneinfo import ZoneInfo
+
+    sched = nv.week_schedule(season, week, data.schedules)
+    out = {}
+    for g in contest.games:
+        if "@" not in g:
+            continue
+        a, h = (canonicalize(x, strict=False) for x in g.split("@"))
+        m = sched[(sched["away_team"] == a) & (sched["home_team"] == h)]
+        if len(m) and isinstance(m.iloc[0].get("gametime"), str):
+            r = m.iloc[0]
+            et = datetime.fromisoformat(f"{r['gameday']}T{r['gametime']}").replace(tzinfo=ZoneInfo("America/New_York"))
+            out[g] = et.astimezone(timezone.utc)
+    return out
+
+
 def _num(x) -> float:
     try:
         v = float(x)
@@ -107,7 +125,7 @@ class NFLProvider:
                for _, r in mapped.iterrows() if isinstance(r.get("player_key"), str)}
         return SlateContext(baseline=proj, market=market, known=known, usage=usage, structured_facts=sfacts,
                             ruled_out=ruled_out, notes=notes, data_source=f"nflverse {season} wk{week}",
-                            ids=ids, season=season, week=week)
+                            ids=ids, season=season, week=week, kickoffs=kickoffs(contest, data, season, week))
 
     # ------------------------------------------------------------------ facts
     def _facts(self, contest: Contest, data: NFLData, season: int, week: int, mapped: pd.DataFrame):

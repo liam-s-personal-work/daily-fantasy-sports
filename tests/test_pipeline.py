@@ -136,3 +136,26 @@ def test_run_stops_cleanly_when_every_game_started(cfg):
     with pytest.raises(SlateStarted):
         run(FIX / "dk_salaries_classic.csv", cfg, backend=be, log=lambda s: None, now=late)
     assert be.calls == []  # nothing spent
+
+
+def test_fd_kickoffs_come_from_the_schedule():
+    """FD files have no kickoff times; the NFL provider supplies them (ET -> UTC, DST-aware)."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from dfs.data.teams import canonicalize
+    from dfs.projections.nfl_provider import kickoffs
+
+    c = load_contest(FIX / "fd_players_classic.csv")
+    assert all(p.start_time is None for p in c.players.values())
+    rows = []
+    for i, g in enumerate(c.games):
+        a, h = (canonicalize(x, strict=False) for x in g.split("@"))  # schedule uses nflverse codes (LA, not LAR)
+        rows.append({"season": 2026, "week": 8, "gameday": "2026-11-01" if i else "2026-10-25",
+                     "gametime": "13:00", "away_team": a, "home_team": h})
+    ko = kickoffs(c, SimpleNamespace(schedules=pd.DataFrame(rows)), 2026, 8)
+    assert set(ko) == set(c.games)
+    first = ko[c.games[0]]
+    assert first == datetime(2026, 10, 25, 17, 0, tzinfo=timezone.utc)  # 1pm EDT
+    assert ko[c.games[1]] == datetime(2026, 11, 1, 18, 0, tzinfo=timezone.utc)  # 1pm EST after the clock change
