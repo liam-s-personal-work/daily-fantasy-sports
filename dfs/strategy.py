@@ -24,10 +24,25 @@ from dfs.optimize.ilp import Infeasible, SolveOptions, solve, solve_many
 STACK_SPORTS = {"nfl", "cfb"}
 
 
+def public_points(contest: Contest, proj: dict[str, Projection], w_site: float = 0.5) -> dict[str, float]:
+    """What rivals are assumed to project: our mean blended with the site's own average.
+
+    Rivals optimising exactly our numbers would make us look worse than we are; rivals with no
+    information would flatter us. Mixing in the site average gives them different, public
+    information. The resulting P(top x%) is still a model figure, not a promise.
+    """
+    out = {}
+    for k, p in proj.items():
+        avg = contest.players[k].site_avg if k in contest.players else None
+        out[k] = (1 - w_site) * p.mean + w_site * avg if avg and avg > 0 else p.mean
+    return out
+
+
 def field_for(contest: Contest, proj: dict[str, Projection], *, kind: ContestKind, seed: int = 23,
               n_lineups: int = 150, time_budget_s: float = 60.0) -> FieldModel | None:
     try:
-        return build_field(contest, proj, n_lineups=n_lineups, seed=seed, time_budget_s=time_budget_s)
+        return build_field(contest, proj, n_lineups=n_lineups, seed=seed, time_budget_s=time_budget_s,
+                           public_points=public_points(contest, proj))
     except Infeasible:
         return None
 
@@ -66,9 +81,11 @@ def _solve_quiet(contest: Contest, points: dict[str, float], opts: SolveOptions,
 
 def candidate_pool(contest: Contest, proj: dict[str, Projection], keys: list[str], sims: np.ndarray, *,
                    exclude: set[str] = frozenset(), user_rules: UserRules | None = None, n_mean: int = 12,
-                   n_sim: int = 48, seed: int = 0, workers: int = 4) -> list[Lineup]:
+                   n_sim: int = 48, seed: int = 0, workers: int = 4,
+                   slot_locks: dict[int, str] | None = None) -> list[Lineup]:
     means = {k: p.mean for k, p in proj.items() if k not in exclude}
-    base = SolveOptions(exclude_keys=set(exclude), user_rules=user_rules, time_limit_s=10, workers=2)
+    base = SolveOptions(exclude_keys=set(exclude), user_rules=user_rules, time_limit_s=10, workers=2,
+                        slot_locks=dict(slot_locks or {}))
     pool = solve_many(contest, means, n_mean, SolveOptions(**{**base.__dict__, "min_unique": 1}), label="mean")
     rng = np.random.default_rng(seed)
     draws = rng.choice(sims.shape[0], size=min(n_sim, sims.shape[0]), replace=False)
@@ -118,7 +135,7 @@ def _rank_key(kind: ContestKind):
 def best_lineups(contest: Contest, proj: dict[str, Projection], keys: list[str], sims: np.ndarray,
                  fm: FieldModel | None, *, kind: ContestKind, target_top: float, n: int = 1,
                  exclude: set[str] = frozenset(), user_rules: UserRules | None = None, seed: int = 0,
-                 scale: dict[str, float] | None = None) -> dict[str, Any]:
+                 scale: dict[str, float] | None = None, slot_locks: dict[int, str] | None = None) -> dict[str, Any]:
     """Best lineup(s) for the contest objective. ``scale`` multiplies a player's simulated points
     (the backup reviewer's bounded adjustments)."""
     s = sims
@@ -130,7 +147,8 @@ def best_lineups(contest: Contest, proj: dict[str, Projection], keys: list[str],
                 s[:, col[k]] *= f
     sims_use = s
     top_line, cash_line = field_lines(fm, keys, sims_use, target_top)
-    pool = candidate_pool(contest, proj, keys, sims_use, exclude=exclude, user_rules=user_rules, seed=seed)
+    pool = candidate_pool(contest, proj, keys, sims_use, exclude=exclude, user_rules=user_rules, seed=seed,
+                          slot_locks=slot_locks)
     if not pool:
         raise Infeasible("no legal lineup for the current rules and exclusions")
     sc = evaluate(pool, keys, sims_use, top_line, cash_line, fm)

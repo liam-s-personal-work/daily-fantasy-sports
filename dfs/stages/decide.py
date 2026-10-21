@@ -35,7 +35,7 @@ class Decision:
 class Decider:
     def __init__(self, contest: Contest, projections: dict[str, Projection], cfg, runner,
                  dossiers: dict[str, GameDossier], log: Callable[[str], None] = print,
-                 n_lineups: int = 1):
+                 n_lineups: int = 1, now=None):
         self.c = contest
         self.proj = projections
         self.cfg = cfg
@@ -47,6 +47,8 @@ class Decider:
         self.sport = contest.rules.sport
         self.kind = contest.kind
         self.report: dict[str, Any] = {}
+        # Players whose games have started can no longer be added (late swap); locked cells stay.
+        self.started = {k for k, p in contest.players.items() if now and p.start_time and p.start_time <= now}
 
     # ------------------------------------------------------------------ helpers
     def _means(self, exclude: set[str] = frozenset()) -> dict[str, float]:
@@ -58,15 +60,15 @@ class Decider:
         return f"maximise P(finishing in the top {self.cfg.target_top:.1%}) against a simulated field"
 
     def _choose(self, points: dict[str, float], exclude: set[str], label: str,
-                user_rules=None) -> tuple[Lineup, dict]:
+                user_rules=None, n: int | None = None, slot_locks: dict[int, str] | None = None) -> tuple[Lineup, dict]:
         """Contest-objective lineup(s); adjusted points rescale that player's simulated outcomes."""
         scale = {k: points[k] / self.proj[k].mean for k in points
                  if k in self.proj and self.proj[k].mean > 0 and abs(points[k] - self.proj[k].mean) > 1e-9}
         proj = {k: (self.proj[k].model_copy(update={"mean": points[k]}) if k in scale else self.proj[k])
                 for k in points if k in self.proj}
         res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=self.kind,
-                               target_top=self.cfg.target_top, n=self.n_lineups, exclude=exclude,
-                               user_rules=user_rules, seed=self.cfg.seed, scale=scale)
+                               target_top=self.cfg.target_top, n=n or 1, exclude=set(exclude) | self.started,
+                               user_rules=user_rules, seed=self.cfg.seed, scale=scale, slot_locks=slot_locks)
         for lu in res["lineups"]:
             lu.label = label
         return res["lineups"][0], res
@@ -152,10 +154,33 @@ class Decider:
         legal = check_legal(c, final)
         if legal:
             raise Infeasible(f"final lineup failed the independent legality check: {legal}")
-        lineups = res["lineups"]
-        lineups[0] = final
+        lineups = self._entry_lineups(final, bpoints if self.report.get("used_backup") else means,
+                                      excluded | (bremoved if self.report.get("used_backup") else set()))
         return Decision(final=final, lineups=lineups, rules_lineup=rules_lu, drafts=drafts, report=self.report,
                         stage_lineups=stage)
+
+    def _entry_lineups(self, final: Lineup, points: dict[str, float], excluded: set[str]) -> list[Lineup]:
+        """One lineup per entry row (portfolio for multi-entry); entries with locked cells keep them."""
+        entries = self.c.entries
+        if not entries:
+            return [final]
+        groups: dict[tuple, list[int]] = {}
+        for i, e in enumerate(entries):
+            locks = tuple((j, sid) for j, (sid, lk) in enumerate(zip(e.current, e.locked)) if lk and sid)
+            groups.setdefault(locks, []).append(i)
+        out: list[Lineup | None] = [None] * len(entries)
+        for locks, idx in groups.items():
+            if not locks and len(idx) == 1:
+                out[idx[0]] = final
+                continue
+            _, res = self._choose(points, excluded, "final", n=len(idx), slot_locks=dict(locks))
+            lus = res["lineups"]
+            if not locks:
+                lus = [final] + [lu for lu in lus if lu.player_keys != final.player_keys]
+            for j, i in enumerate(idx):
+                out[i] = lus[j % len(lus)]
+        self.report["entries"] = {"n": len(entries), "lock_groups": len(groups)}
+        return [lu for lu in out if lu is not None]
 
     # ------------------------------------------------------------------ report
     def markdown(self, d: Decision, timing: dict, llm: dict) -> str:

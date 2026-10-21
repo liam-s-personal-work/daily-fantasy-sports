@@ -311,7 +311,8 @@ def news_tasks(contest: Contest, keys: list[str], now: datetime, *, model: str =
         tasks.append(AgentTask(stage="news", name=f"news:{g}", model=model, tools=["WebSearch", "WebFetch"],
                                system=prompts.NEWS_SYSTEM.format(max_searches=max_searches),
                                prompt=prompts.NEWS_PROMPT.format(now=now.isoformat(), players=lines),
-                               schema=schemas.NEWS, max_turns=max_searches * 2 + 4, timeout_s=600))
+                               schema=schemas.NEWS, max_turns=max_searches * 2 + 4, timeout_s=600,
+                               cacheable=False))
     return tasks
 
 

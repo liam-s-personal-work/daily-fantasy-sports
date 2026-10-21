@@ -214,13 +214,13 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     clock.mark(f"forecast+blend: {len(forecasts)} forecasts, {len(projections)} projections")
 
     # 7-11. decide (simulate, drafts, strategist/backup, solve, checker loop, user rules)
-    decider = Decider(contest, projections, cfg, runner, dossiers, log=log)
+    decider = Decider(contest, projections, cfg, runner, dossiers, log=log, n_lineups=max(1, len(contest.entries)),
+                      now=now or datetime.now(timezone.utc))
     decision = await decider.decide()
     clock.mark(f"decision: {decision.final.label} mean {decision.final.mean:.1f}")
 
     # 12. outputs
-    upload = write_upload(contest, [decision.final] * max(1, min(len(contest.entries), 1)), run_dir / "upload.csv",
-                          only_changed=False)
+    upload = write_upload(contest, decision.lineups, run_dir / "upload.csv", only_changed=False)
     rules_upload = None
     if decision.rules_lineup is not None:
         rules_upload = write_upload(contest, [decision.rules_lineup], run_dir / "upload_my_rules.csv", only_changed=False)
@@ -229,8 +229,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
                     "kind": contest.kind.value, "games": contest.games, "warnings": contest.warnings,
                     "rules_confidence": contest.rules.confidence},
         "timing_s": clock.marks, "llm": runner.summary(), "decision": decision.report,
-        "final": decision.final, "rules_lineup": decision.rules_lineup,
-        "legal": check_legal(contest, decision.final),
+        "final": decision.final, "rules_lineup": decision.rules_lineup, "lineups": decision.lineups,
+        "stage_lineups": decision.stage_lineups, "legal": check_legal(contest, decision.final),
+        "config": {k: (str(v) if isinstance(v, Path) else v.model_dump() if hasattr(v, "model_dump") else v)
+                   for k, v in cfg.__dict__.items()},
     }
     _save(run_dir, "report.json", report)
     (run_dir / "report.md").write_text(decider.markdown(decision, clock.marks, runner.summary()))

@@ -25,6 +25,8 @@ class SolveOptions:
     min_unique: int = 1  # each new lineup shares at most roster_size - min_unique players with each avoided one
     exclude_keys: set[str] = field(default_factory=set)
     lock_keys: set[str] = field(default_factory=set)
+    # Late swap: slot index -> site id that must stay in exactly that slot (DK "(LOCKED)" cells).
+    slot_locks: dict[int, str] = field(default_factory=dict)
     min_salary: int | None = None
     qb_stack: int = 0  # NFL: at least this many WR/TE from the chosen QB's team
     bring_back: int = 0  # NFL: at least this many players from the QB's opponent
@@ -67,8 +69,12 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
     bad_teams = {t.upper() for t in ur.exclude_teams}
     bad_games = {g.upper() for g in ur.exclude_games}
 
+    locked_ids = set(opts.slot_locks.values())
+
     def usable(c: Candidate) -> bool:
         k = c.player_key
+        if c.site_id in locked_ids:
+            return True
         if k not in points:
             return False
         if k in lock:
@@ -146,6 +152,12 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
         if k not in by_player:
             raise Infeasible(f"locked player {k} has no usable row")
         m.Add(sum(by_player[k]) == 1)
+    for idx, sid in opts.slot_locks.items():
+        g = slots[idx].name
+        vs = [v for (ci, gg), v in x.items() if gg == g and cands[ci].site_id == sid]
+        if not vs:
+            raise Infeasible(f"locked slot {idx + 1} ({g}) cannot hold {sid}")
+        m.Add(sum(vs) == 1)
 
     # Stacks expressed in user rules: {"team": "BUF", "positions": ["WR","TE"], "min": 2}
     for st in ur.stack:
@@ -179,7 +191,7 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
 
     obj = []
     for (ci, g), v in x.items():
-        obj.append(int(round(points[cands[ci].player_key] * mult[g] * SCALE)) * v)
+        obj.append(int(round(points.get(cands[ci].player_key, 0.0) * mult[g] * SCALE)) * v)
     m.Maximize(sum(obj))
 
     solver = cp_model.CpSolver()
@@ -194,13 +206,20 @@ def solve(contest: Contest, points: dict[str, float], opts: SolveOptions | None 
     for (ci, g), v in x.items():
         if solver.Value(v):
             picked[g].append(cands[ci])
-    lineup_slots = []
-    for s in slots:  # file order; within a group, higher salary first (stable, readable)
+    lineup_slots: list[LineupSlot | None] = [None] * size
+    for idx, sid in opts.slot_locks.items():  # locked cells keep their exact position
+        c = next(c for c in picked[slots[idx].name] if c.site_id == sid)
+        picked[slots[idx].name].remove(c)
+        lineup_slots[idx] = LineupSlot(slot=slots[idx].name, player_key=c.player_key, site_id=c.site_id,
+                                       salary=c.salary, points_multiplier=slots[idx].points_multiplier)
+    for i, s in enumerate(slots):  # file order; within a group, higher salary first (stable, readable)
+        if lineup_slots[i] is not None:
+            continue
         c = sorted(picked[s.name], key=lambda c: (-c.salary, c.site_id)).pop(0)
         picked[s.name].remove(c)
-        lineup_slots.append(LineupSlot(slot=s.name, player_key=c.player_key, site_id=c.site_id,
-                                       salary=c.salary, points_multiplier=s.points_multiplier))
-    mean = sum(points[s.player_key] * s.points_multiplier for s in lineup_slots)
+        lineup_slots[i] = LineupSlot(slot=s.name, player_key=c.player_key, site_id=c.site_id,
+                                     salary=c.salary, points_multiplier=s.points_multiplier)
+    mean = sum(points.get(s.player_key, 0.0) * s.points_multiplier for s in lineup_slots)
     return Lineup(slots=lineup_slots, label=label, salary=sum(s.salary for s in lineup_slots), mean=round(mean, 3),
                   metrics={"optimal": float(status == cp_model.OPTIMAL)})
 

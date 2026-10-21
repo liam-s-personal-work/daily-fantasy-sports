@@ -42,6 +42,7 @@ class AgentTask:
     timeout_s: float = 600.0
     max_budget_usd: float | None = None
     effort: str | None = None
+    cacheable: bool = True  # False for anything that must be fresh (last-hour news)
 
     def cache_key(self) -> str:
         blob = json.dumps([MODELS.get(self.model, self.model), self.system, self.prompt, self.schema,
@@ -168,7 +169,7 @@ class Runner:
         return self.cache_dir / f"{task.cache_key()}.json" if self.cache_dir else None
 
     async def run(self, task: AgentTask) -> AgentResult:
-        path = self._cache_path(task)
+        path = self._cache_path(task) if task.cacheable else None
         if path and path.exists():
             data = json.loads(path.read_text())
             res = AgentResult(name=task.name, output=data["output"], ok=True, cached=True)
