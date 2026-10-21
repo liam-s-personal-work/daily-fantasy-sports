@@ -9,6 +9,7 @@ from pathlib import Path
 from dfs.grading_run import grade_run
 
 OUT = Path("docs/results/replays.md")
+REPLAYS = "runs/replays_v2"  # runs of the current engine (scripts/replay_all.sh)
 
 
 def label(rep: dict, base: dict) -> str:
@@ -21,7 +22,7 @@ def label(rep: dict, base: dict) -> str:
 
 def main() -> None:
     rows = []
-    for d in sorted(glob.glob("runs/replays/*/")):
+    for d in sorted(glob.glob(f"{REPLAYS}/*/")):
         d = Path(d)
         if not (d / "replay_summary.json").exists():
             continue
@@ -60,7 +61,7 @@ def main() -> None:
           "What this shows: the full pipeline runs on real site files, legally, in minutes, for a dollar or two per",
           "slate. What it does not show: an edge. At the lineup level five slates are noise (see the step column);",
           "showing even a 5% top-2.3% rate takes on the order of 250 independent slates. Player-level evidence",
-          "converges far faster: see `forecast_experiment_2026_wk3-6_blind_rescored.md`."]
+          "converges far faster: see `forecast_experiment_2026_wk3-6_blind.md`."]
     OUT.write_text("\n".join(L) + "\n")
     print("\n".join(L))
 

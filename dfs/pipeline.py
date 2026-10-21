@@ -313,10 +313,11 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     _save(run_dir, "forecasts.json", forecasts)
     learned = blend_mod.load_learned(cfg.learned_blend)
     calib = blend_mod.load_calibration(cfg.calibration) if cfg.calibration else {}
-    for name, table in (("blend weights", learned), ("calibration", calib)):
-        fit = {tuple(w) for w in (table.get("_fit_weeks") or [])}
-        if ctx.season and ctx.week and (ctx.season, ctx.week) in fit:  # never grade a week on numbers fit to it
-            log(f"WARNING: learned {name} were fit on {ctx.season} week {ctx.week}; using the priors instead")
+    season, week = ctx.season or cfg.season, ctx.week or cfg.week
+    for name in ("blend weights", "calibration"):
+        table = learned if name == "blend weights" else calib
+        if table and not blend_mod.unless_fit_on(table, season, week):  # never use numbers fit on this week
+            log(f"WARNING: learned {name} were fit on {season} week {week}; using the priors instead")
             if name == "blend weights":
                 learned = {}
             else:
@@ -330,7 +331,8 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
     # 7-11. decide (simulate, drafts, strategist/backup, solve, checker loop, user rules)
     decider = Decider(contest, projections, cfg, runner, dossiers, log=log, n_lineups=max(1, len(contest.entries)),
-                      now=now or datetime.now(timezone.utc), priced=priced if forecasts else set(), clock=clock)
+                      now=now or datetime.now(timezone.utc), priced=priced if forecasts else set(), clock=clock,
+                      forecasted=set(forecasts) if forecasts else None)
     decision = await decider.decide()
     clock.mark(f"decision: {decision.final.label} mean {decision.final.mean:.1f}")
 
@@ -372,5 +374,6 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
 
 def agents_blind(fact) -> bool:
+    """Exactly what the forecaster is shown (subject and text both pass the blind)."""
     from dfs.sources import blind_text
-    return blind_text(fact.text) is not None and fact.kind != "line"
+    return blind_text(f"{fact.subject} {fact.text}") is not None and fact.kind != "line"

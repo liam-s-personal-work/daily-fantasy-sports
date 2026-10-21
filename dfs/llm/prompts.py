@@ -26,7 +26,9 @@ Rules:
 - For availability facts set status (out, inactive, injured_reserve, suspended, doubtful, questionable, probable,
   active). The subject is the player's full name as listed on the slate, or the team code for team-level facts.
 - Use only information published before the "As of" time below; ignore anything dated later.
-- Do not report betting lines, odds, salaries or fantasy point projections.
+- Do not report betting lines, odds, salaries, fantasy point projections or past fantasy point totals.
+- Set status on every fact ("none" when it is not about availability); a past game's absence is not
+  this game's status.
 - The structured data block below is already known (from nflverse); do not re-search it. Focus on what is
   newer than it or missing from it."""
 

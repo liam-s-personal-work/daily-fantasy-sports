@@ -78,12 +78,15 @@ _LEAKS = [
     # prices and salaries
     re.compile(r"\$\s?\d"),
     re.compile(r"\b(salar(y|ies)|priced at|price tag|costs? \d|\d{1,2}(\.\d)?k\b)", re.I),
-    re.compile(r"\b(draftkings|fanduel|dk|fd|prizepicks|underdog)\b", re.I),
+    re.compile(r"\b(draftkings|fanduel|dk(?! metcalf\b)|fd|prizepicks|underdog)\b", re.I),
     re.compile(r"(avg ?points ?per ?game|site average|points per game average)", re.I),
     # betting markets
-    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied (team )?total|point total|team total|"
-               r"game total|vegas|sportsbooks?|oddsmakers?|bookmakers?|books? (have|has|make)|props?\b|"
-               r"(laying|giving|getting) \d|by \d{1,2}(\.5)? points|totals? (of|is|at|sits at|:)\s*\d{2})", re.I),
+    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied|point total|team total|"
+               r"game total|(?<!las )vegas|bettors?|betting|sportsbooks?|oddsmakers?|bookmakers?|books? (have|has|make)|"
+               r"props?\b|(laying|giving|getting) (\d|one|two|three|four|five|six|seven|a field goal|a touchdown)|"
+               r"by \d{1,2}(\.5)? points|by \d{1,2}\.5\b|totals?\s*(of|is|at|sits at|:)\s*\d{2}|pick'?em|"
+               r"line (is|of|at|sits)\b|listed at \d{4}\b)", re.I),
+    re.compile(r"½"),
     re.compile(rf"(?<![\w.]){_SIGN}\d{{3}}\b"),  # American odds
     re.compile(r"\b(favou?rites?|underdogs?|favou?red by|dogs? of|line (moved|movement)|odds)\b", re.I),
     re.compile(rf"(?<![\w.]){_SIGN}\d{{1,2}}(\.5)?(?![\w.%])"),  # spreads like -3.5 / +7 / -2.5 with a minus sign
@@ -93,6 +96,7 @@ _LEAKS = [
                r"projections?|expected to score|ownership|rostership|\d+(\.\d)?% owned|owned at|chalk|value play|smash|must[- ]start|"
                r"start/sit|start or sit|sleepers?|dfs|gpp|cash games?)\b", re.I),
     re.compile(r"\b(low|mid|high)-end (qb|rb|wr|te)\d\b|\b(qb|rb|wr|te)\d{2}\b|\btop-\d{1,2} (option|play|finish)", re.I),
+    re.compile(r"\b\d{1,2}\.\d{1,2} ((fantasy )?points?|last week)\b|\bpoints? (per|a) game\b", re.I),  # past fantasy scores
 ]
 
 

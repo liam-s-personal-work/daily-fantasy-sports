@@ -10,26 +10,26 @@ our field model, not the real contest (no standings files were available).
 
 | Slate | Wall clock | Model cost | Lineup pts | Best possible | Beat sim. field | Sim. top-2.3% cut | Player MAE | 80% band coverage |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| DK NFL classic, 2026 wk 6 main (10 games) | 206 s | $1.63 | 122.5 | 236.3 | 83% | 150.2 | 4.56 | 82% |
-| DK NFL classic, 2026 wk 3 main (13 games) | 214 s | $1.72 | 146.6 | 256.8 | 93% | 159.8 | 4.79 | 75% |
-| DK NFL showdown, 2026 wk 6 DAL@GB | 86 s | $0.24 | 70.3 | 117.3 | 35% | 105.4 | 4.48 | 67% |
-| FD NFL classic, 2026 wk 6 main (10 games) | 170 s | $1.30 | 109.3 | 215.2 | 61% | 150.8 | 4.23 | 85% |
-| FD NFL single game, 2026 wk 1 NE@SEA | 85 s | $0.25 | 43.0 | 95.1 | 37% | 75.8 | 4.82 | 90% |
+| DK NFL classic, 2026 wk 6 main (10 games) | 214 s | $1.63 | 145.5 | 236.3 | 97% | 146.6 | 4.52 | 81% |
+| DK NFL classic, 2026 wk 3 main (13 games) | 228 s | $1.79 | 151.1 | 256.8 | 95% | 157.8 | 4.72 | 75% |
+| DK NFL showdown, 2026 wk 6 DAL@GB | 101 s | $0.28 | 87.1 | 117.3 | 78% | 105.4 | 4.62 | 72% |
+| FD NFL classic, 2026 wk 6 main (10 games) | 154 s | $1.53 | 130.8 | 215.2 | 95% | 140.2 | 4.23 | 82% |
+| FD NFL single game, 2026 wk 1 NE@SEA | 97 s | $0.27 | 42.6 | 95.1 | 33% | 73.6 | 4.72 | 90% |
 
 Points gained (+) or lost (−) by each step, in actual points (alternatives are not steps):
 
 | Slate | Baseline → blended numbers | → contest objective + strategist | Checker | Forecast-only lineup | Draft A / B / C |
 |---|---:|---:|---:|---:|---|
-| DK NFL classic, 2026 wk 6 main (10 games) | +16.8 | -19.0 | +0.0 | 132.7 | 113.1 / 122.5 / 119.9 |
-| DK NFL classic, 2026 wk 3 main (13 games) | +32.2 | +3.9 | +0.0 | 142.7 | 142.7 / 146.64 / 138.44 |
-| DK NFL showdown, 2026 wk 6 DAL@GB | -37.6 | +0.0 | +0.0 | 70.28 | 73.88 / 70.28 / 86.96 |
-| FD NFL classic, 2026 wk 6 main (10 games) | -24.4 | +0.0 | +0.0 | 109.28 | 116.8 / 109.28 / 109.28 |
-| FD NFL single game, 2026 wk 1 NE@SEA | -16.5 | +0.0 | +0.0 | 61.45 | 43.05 / 43.05 / 61.45 |
+| DK NFL classic, 2026 wk 6 main (10 games) | -10.1 | +19.0 | +0.0 | 136.8 | 126.5 / 145.46 / 137.5 |
+| DK NFL classic, 2026 wk 3 main (13 games) | -13.1 | +9.3 | +0.0 | 151.1 | 142.7 / 151.1 / 143.24 |
+| DK NFL showdown, 2026 wk 6 DAL@GB | -4.4 | +16.8 | +0.0 | 70.28 | 70.28 / 87.07 / 86.96 |
+| FD NFL classic, 2026 wk 6 main (10 games) | +12.5 | +6.2 | +0.0 | 130.78 | 124.58 / 130.78 / 134.08 |
+| FD NFL single game, 2026 wk 1 NE@SEA | +18.8 | -18.8 | +0.0 | 51.35 | 51.75 / 42.64 / 47.4 |
 
-Totals: 5 slates, 12.7 minutes of wall clock, $5.14 of model calls; every final lineup
+Totals: 5 slates, 13.2 minutes of wall clock, $5.49 of model calls; every final lineup
 passed the independent legality check; 0 of 5 reached the simulated field's top-2.3% cut.
 
 What this shows: the full pipeline runs on real site files, legally, in minutes, for a dollar or two per
 slate. What it does not show: an edge. At the lineup level five slates are noise (see the step column);
 showing even a 5% top-2.3% rate takes on the order of 250 independent slates. Player-level evidence
-converges far faster: see `forecast_experiment_2026_wk3-6_blind_rescored.md`.
+converges far faster: see `forecast_experiment_2026_wk3-6_blind.md`.

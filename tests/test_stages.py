@@ -239,7 +239,11 @@ def test_update_blend_keeps_prior_without_evidence(tmp_path):
     "Sportsbooks have the Rams laying 12.5 points", "Oddsmakers project LA for 32 points", "LA team total of 32",
     "Seattle by 2.5 points", "Puka Nacua prop: over 7.5 receptions", "Nacua costs 9,800 on DraftKings", "priced at 9.8K",
     "AvgPointsPerGame: 24.6", "site average is 24.6", "scored 31.2 PPR last week", "a low-end WR1 this week",
-    "the WR12 in rankings", "Josh Allen $8,200", "12% owned in GPPs"])
+    "the WR12 in rankings", "Josh Allen $8,200", "12% owned in GPPs", "Seattle by 2.5", "Total: 42.5",
+    "Nacua posted 31.2 points in Week 5", "He has scored 25.3 points per game this year", "He put up 31.4 last week",
+    "Buffalo's implied 27.5", "the line is BUF by 6.5", "BUF -6\u00bd", "a pick'em game", "Mahomes is listed at 7800",
+    "Seattle laying a field goal at home", "Arizona is getting three points at home",
+    "Bettors expect a shootout with 51.5 points"])
 def test_blind_drops_leaks(text):
     assert blind_text(text) is None
 
@@ -247,7 +251,9 @@ def test_blind_drops_leaks(text):
 @pytest.mark.parametrize("text", [
     "Lamar Jackson (ankle) listed questionable after missing two games.", "He is the team's WR1 with a 28% target share.",
     "Bills ranked 3rd in pass defense", "Skyy Moore (WR, GB): official report Out (Ankle); practice: Did Not Participate",
-    "Total of 3 touchdowns this season", "He played 64% of snaps", "Kyle Pitts owned the red zone"])
+    "Total of 3 touchdowns this season", "He played 64% of snaps", "Kyle Pitts owned the red zone",
+    "DK Metcalf (WR, PIT): official report Questionable (Hamstring)", "Drew Lock will start in Las Vegas",
+    "He averaged 4.5 yards per carry over the last three games"])
 def test_blind_keeps_facts(text):
     assert blind_text(text) == text
 
@@ -402,3 +408,52 @@ def test_runner_stops_at_the_deadline_and_splits_the_budget():
     r.deadline_at = _t.monotonic() + 5
     res = asyncio.run(r.run(AgentTask(stage="checker", name="d", system="x", prompt="q", schema={"type": "object"})))
     assert not res.ok and "deadline" in res.error
+
+
+def test_forecast_parse_accepts_an_unambiguous_truncated_key():
+    r = AgentResult(name="forecast:A@B", ok=True, output={"game": "A@B", "players": [
+        {"player_key": "IND|dst", "low": 1, "likely": 5, "high": 12, "p_dnp": 0, "rationale": "x"},
+        {"player_key": "IND|j", "low": 1, "likely": 5, "high": 12, "p_dnp": 0, "rationale": "x"}]})
+    fc, problems = agents.parse_forecasts([r], {"IND|dst|DST", "IND|j smith|WR", "IND|j jones|RB"})
+    assert set(fc) == {"IND|dst|DST"} and len(problems) == 1
+
+
+def test_web_facts_need_a_status_to_count_as_out():
+    web = Fact(id="G.F3", subject="X", kind="injury", text="ruled out vs. BAL last week; Week 7 status not yet known")
+    assert not agents.says_out(web)
+    assert agents.says_out(web.model_copy(update={"status": "out"}))
+    official = Fact(id="G.S4", subject="X", kind="injury", text="X (WR, GB): official report Out (Ankle)")
+    assert agents.says_out(official)
+
+
+def test_inactive_lists_under_a_team_subject_count_for_ruled_out():
+    c = _named_contest()
+    g = c.players["BUF|khalil shakir|WR"].game
+    d = GameDossier(game=g, summary="", ruled_out=["Khalil Shakir"], facts=[
+        Fact(id=f"{g}.F2", subject="BUF", team="BUF", kind="status", status="inactive", confidence="high",
+             text="Bills inactives: WR Khalil Shakir, OL X, DL Y", source_url="https://www.buffalobills.com/x")])
+    assert agents.ruled_out_keys(c, {g: d}) == {"BUF|khalil shakir|WR"}
+
+
+def test_novelty_rule_only_for_forecast_players():
+    c = _named_contest()
+    f = Fact(id="G.F1", subject="Khalil Shakir", team="BUF", kind="role", text="loses the slot job", confidence="high")
+    out = {"remove_not_playing": [], "cuts": [{"player_key": "BUF|khalil shakir|WR", "fact_ids": ["G.F1"], "reason": "x"}]}
+    ex, _ = agents.apply_strategist(out, {"G.F1": f}, c, {}, priced={"G.F1"}, forecasted={"BUF|josh allen|QB"})
+    assert ex == {"BUF|khalil shakir|WR"}  # never forecast, so the fact is new to his numbers
+    ex, _ = agents.apply_strategist(out, {"G.F1": f}, c, {}, priced={"G.F1"}, forecasted={"BUF|khalil shakir|WR"})
+    assert ex == set()
+
+
+def test_runner_caps_never_exceed_the_budget():
+    spent = []
+
+    class Greedy:
+        async def run(self, task):  # spends every cent it is allowed
+            spent.append(task.max_budget_usd)
+            return AgentResult(name=task.name, output={"ok": 1}, ok=True, cost_usd=task.max_budget_usd)
+
+    r = Runner(Greedy(), budget_usd=2.0, concurrency=4)
+    tasks = [AgentTask(stage="research", name=f"r{i}", system="x", prompt=f"p{i}", schema={"type": "object"}) for i in range(8)]
+    asyncio.run(r.run_all(tasks))
+    assert r.spent_usd <= 2.0 + 1e-6

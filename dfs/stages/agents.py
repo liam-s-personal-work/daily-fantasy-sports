@@ -32,10 +32,14 @@ AVAILABILITY_KINDS = {"injury", "status", "role", "depth_chart", "usage", "coach
 
 
 def says_out(fact: Fact) -> bool:
-    """The fact states the player will not play (structured status first, then explicit wording)."""
+    """The fact states the player will not play. Web-research facts must say so in their status field
+    (their prose often describes past games or returns from IR); structured facts (official injury
+    report rows) may also be read from their fixed wording."""
     st = (getattr(fact, "status", None) or "").lower()
     if st:
         return st in OUT_STATUSES
+    if ".F" in (fact.id or ""):
+        return False
     for m in OUT_WORDS.finditer(fact.text or ""):
         if not _NEGATED.search((fact.text or "")[:m.start()]):
             return True
@@ -185,9 +189,15 @@ def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, st
 
 
 def _after(as_of: str | None, now: datetime | None) -> bool:
-    """True when the fact's stated date is later than ``now`` (a past-slate run must not see the future)."""
+    """True when the fact's stated time (or date) is later than ``now`` (a past-slate run must not see the future)."""
     if not as_of or now is None:
         return False
+    try:
+        t = datetime.fromisoformat(as_of.strip().replace("Z", "+00:00"))
+        if t.tzinfo is not None:
+            return t > now
+    except ValueError:
+        pass
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", as_of)
     if not m:
         return False
@@ -260,9 +270,12 @@ def parse_forecasts(results: list[AgentResult], valid_keys: set[str]) -> tuple[d
             continue
         for p in r.output.get("players", []):
             k = p.get("player_key")
-            if k not in valid_keys:
-                problems.append(f"{r.name}: unknown player_key {k!r}")
-                continue
+            if k not in valid_keys:  # a truncated key ('IND|dst' for 'IND|dst|DST') is accepted if unambiguous
+                hits = [v for v in valid_keys if isinstance(k, str) and v.lower().startswith(k.lower().rstrip("|") + "|")]
+                if len(hits) != 1:
+                    problems.append(f"{r.name}: unknown player_key {k!r}")
+                    continue
+                k = hits[0]
             lo, mid, hi = sorted([float(p["low"]), float(p["likely"]), float(p["high"])])
             out[k] = Forecast(player_key=k, low=lo, likely=mid, high=hi,
                               p_dnp=min(max(float(p.get("p_dnp", 0.0)), 0.0), 1.0),
@@ -317,6 +330,15 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
     return good
 
 
+def _names_player(f: Fact, key: str, contest: Contest) -> bool:
+    """For inactive lists: a fact whose subject lists several players ('A / B / C') or the team, and
+    whose text names this player in full."""
+    n = key_name(key, contest)
+    if n in {_subject_name(x) for x in re.split(r"\s*[/,&]\s*", f.subject or "")}:
+        return True
+    return team_fact(f, contest.players[key].team, contest) and re.search(rf"\b{re.escape(n)}\b", norm_name(f.text or "")) is not None
+
+
 def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[str]:
     """Players a dossier lists as ruled out AND proves with one of its own facts (an availability fact
     about him, not low-confidence, that says he will not play). A bare name in the list removes nobody:
@@ -327,7 +349,7 @@ def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[st
         for k in _players_of_game(contest, d.game):
             if key_name(k, contest) in names and any(
                     f.kind in ("injury", "status") and f.confidence != "low" and not host_blocked(f.source_url)
-                    and fact_about(f, k, contest) and says_out(f) for f in d.facts):
+                    and (fact_about(f, k, contest) or _names_player(f, k, contest)) and says_out(f) for f in d.facts):
                 out.add(k)
     return out
 
@@ -337,7 +359,8 @@ def _hard_out(facts: list[Fact]) -> bool:
 
 
 def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
-                     dossiers: dict[str, GameDossier], priced: set[str] = frozenset()) -> tuple[set[str], dict]:
+                     dossiers: dict[str, GameDossier], priced: set[str] = frozenset(),
+                     forecasted: set[str] | None = None) -> tuple[set[str], dict]:
     """Return (keys to exclude, report). Only fact-backed removals and cuts are accepted.
 
     Novelty rule: a cut needs a fact the forecaster did NOT already price in (``priced``), unless
@@ -359,7 +382,8 @@ def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
     for item in output.get("cuts", []):
         k = item.get("player_key")
         facts = _verified(item.get("fact_ids", []), idx, k, contest) if k in contest.players else []
-        new = [f for f in facts if f.id not in priced]
+        # a fact is "priced in" only for a player the forecaster actually forecast
+        new = facts if forecasted is not None and k not in forecasted else [f for f in facts if f.id not in priced]
         if facts and (new or _hard_out(facts)):
             excluded.add(k)
             report["accepted"].append({"cut": k, "facts": [f.id for f in facts], "reason": item.get("reason")})
@@ -383,7 +407,7 @@ def checker_task(contest: Contest, lu: Lineup, dossiers: dict[str, GameDossier],
 
 
 def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Lineup,
-                    priced: set[str] = frozenset()) -> tuple[bool, set[str], dict]:
+                    priced: set[str] = frozenset(), forecasted: set[str] | None = None) -> tuple[bool, set[str], dict]:
     """Code decides: fail only on a fact-backed blocker about availability or role. Role claims
     need a fact the forecaster had not priced in; hard outs always count."""
     fails: set[str] = set()
@@ -395,7 +419,7 @@ def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Li
             continue
         backed = _verified(a.get("fact_ids", []), idx, k, contest)
         claim = a.get("claim")
-        new = [f for f in backed if f.id not in priced]
+        new = backed if forecasted is not None and k not in forecasted else [f for f in backed if f.id not in priced]
         decisive = a.get("severity") == "blocker" and bool(backed) and (
             (claim == "not_playing" and (_hard_out(backed) or bool(new))) or (claim == "limited_or_role_cut" and bool(new)))
         if decisive:
@@ -453,7 +477,8 @@ def news_tasks(contest: Contest, keys: list[str], now: datetime, *, model: str =
     return tasks
 
 
-def parse_news(results: list[AgentResult], contest: Contest, keys: list[str]) -> dict[str, dict]:
+def parse_news(results: list[AgentResult], contest: Contest, keys: list[str],
+               now: datetime | None = None) -> dict[str, dict]:
     """player_key -> latest update dict (only for players named in the update)."""
     by_name = {key_name(k, contest): k for k in keys}
     out: dict[str, dict] = {}
@@ -462,8 +487,8 @@ def parse_news(results: list[AgentResult], contest: Contest, keys: list[str]) ->
             continue
         for u in r.output.get("updates", []):
             k = by_name.get(_subject_name(u.get("player", "")))
-            if not k or host_blocked(u.get("source_url")):
-                continue  # never act on news from DFS, betting or no-automation sites
+            if not k or host_blocked(u.get("source_url")) or _after(u.get("as_of"), now):
+                continue  # never act on news from DFS, betting or no-automation sites, or dated after now
             if u.get("status") in ("inactive", "out") and not u.get("source_url"):
                 u = {**u, "status": "questionable", "text": f"(unsourced 'out' downgraded) {u.get('text', '')}"}
             out[k] = u

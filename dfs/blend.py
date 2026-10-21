@@ -37,6 +37,11 @@ def load_learned(path: str | Path | None) -> dict:
     return {}
 
 
+def unless_fit_on(table: dict, season: int | None, week: int | None) -> dict:
+    """``table`` unless it was fit on (season, week): a run must never use numbers learned from its own week."""
+    return {} if season and week and [int(season), int(week)] in (table.get("_fit_weeks") or []) else table
+
+
 def load_calibration(path: str | Path | None = None) -> dict:
     p = Path(path) if path else LEARNED_DIR / "calibration.json"
     return json.loads(p.read_text()) if p.exists() else {}

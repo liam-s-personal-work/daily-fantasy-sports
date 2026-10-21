@@ -36,7 +36,8 @@ class Decision:
 class Decider:
     def __init__(self, contest: Contest, projections: dict[str, Projection], cfg, runner,
                  dossiers: dict[str, GameDossier], log: Callable[[str], None] = print,
-                 n_lineups: int = 1, now=None, priced: set[str] = frozenset(), clock=None):
+                 n_lineups: int = 1, now=None, priced: set[str] = frozenset(), clock=None,
+                 forecasted: set[str] | None = None):
         self.c = contest
         self.proj = projections
         self.cfg = cfg
@@ -49,6 +50,7 @@ class Decider:
         self.kind = contest.kind
         self.report: dict[str, Any] = {}
         self.priced = set(priced)  # fact ids the forecaster already saw
+        self.forecasted = forecasted  # players the forecaster forecast (the novelty rule applies only to them)
         # Players whose games have started can no longer be added (late swap); locked cells stay.
         self.now = now
         self.clock = clock  # the run's deadline: review stages get only the time that is left
@@ -132,7 +134,8 @@ class Decider:
         backup_t = agents.strategist_task(c, drafts, top3_text, self.dossiers, self.proj, self._objective_name(),
                                           model=cfg.backup_model, backup=True, timeout_s=self._timeout(0.25))
         strat, backup = await asyncio.gather(self.runner.run(strat_t), self.runner.run(backup_t))
-        applied, err = (self._apply(agents.apply_strategist, strat.output, self.idx, c, self.dossiers, self.priced)
+        applied, err = (self._apply(agents.apply_strategist, strat.output, self.idx, c, self.dossiers, self.priced,
+                                    self.forecasted)
                         if strat.ok else (None, strat.error))
         if applied is not None:
             excluded, srep = applied
@@ -165,7 +168,8 @@ class Decider:
                 break
             chk = await self.runner.run(agents.checker_task(c, final, self.dossiers, self.proj, model=cfg.review_model,
                                                             attempt=attempt, timeout_s=self._timeout(0.2)))
-            verdict, err = (self._apply(agents.checker_verdict, chk.output, self.idx, c, final, self.priced)
+            verdict, err = (self._apply(agents.checker_verdict, chk.output, self.idx, c, final, self.priced,
+                                        self.forecasted)
                             if chk.ok else (None, chk.error))
             if verdict is None:
                 main_ok = False

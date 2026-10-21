@@ -217,8 +217,10 @@ class Runner:
                 # Each task may spend at most its share of what is left: the tasks that can run at the
                 # same time cannot together exceed the run budget.
                 share = left / max(1, self.concurrency - self.in_flight)
-                capped = replace(task, max_budget_usd=round(min(task.max_budget_usd or share, share), 4))
-                self.reserved_usd += est
+                cap = round(min(task.max_budget_usd or share, share), 4)
+                capped = replace(task, max_budget_usd=cap)
+                hold = max(est, cap)  # reserve what the task may spend, so caps handed out never exceed the budget
+                self.reserved_usd += hold
                 self.in_flight += 1
                 try:
                     res = await asyncio.wait_for(self.backend.run(capped), timeout=timeout)
@@ -229,7 +231,7 @@ class Runner:
                 except Exception as e:
                     res = AgentResult(name=task.name, output=None, ok=False, error=repr(e))
                 finally:
-                    self.reserved_usd -= est
+                    self.reserved_usd -= hold
                     self.in_flight -= 1
                 self.spent_usd += res.cost_usd
                 if res.ok:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -68,6 +68,9 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     final: Lineup = st["final"]
     cfg = st["config"]
     now = now or datetime.now(timezone.utc)
+    if web and now < datetime.now(timezone.utc) - timedelta(minutes=15) and not cfg.get("allow_lookahead"):
+        log("WARNING: --now is in the past, so the news search is off (it would surface the results)")
+        web = False
     runner = Runner(backend or default_backend(), cache_dir=run_dir.parent / "cache" / "llm",
                     budget_usd=float(cfg.get("lastcall_budget_usd", 4.0)), log=log)
     entry_lus = [Lineup.model_validate(x) for x in st["report"].get("lineups") or []] or [final]
@@ -78,7 +81,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     news_failed: list[str] = []
     if web:
         results = await runner.run_all(agents.news_tasks(c, picks, now))
-        news = agents.parse_news(results, c, picks)
+        news = agents.parse_news(results, c, picks, now=now)
         news_failed = [r.name.split(":", 1)[1] for r in results if not r.ok]  # games whose news check did not run
         for g in news_failed:
             log(f"WARNING: the news and inactives check failed for {g}: re-run the last call, or check by hand")
@@ -107,9 +110,14 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         ft = agents.forecast_tasks(sub, facts, st["usage"], {}, group - out, model=cfg.get("forecast_model", "opus"))
         refreshed, _ = agents.parse_forecasts(await runner.run_all(ft), set(c.players))
         if refreshed:
+            base = json.loads((run_dir / "baseline.json").read_text())
+            se, wk = base.get("season"), base.get("week")
             newp = blend_mod.blend({k: st["baseline"][k] for k in refreshed if k in st["baseline"]}, refreshed,
-                                   c.players, "nfl", learned=blend_mod.load_learned(cfg.get("learned_blend")),
-                                   calib=blend_mod.load_calibration(cfg["calibration"]) if cfg.get("calibration") else {})
+                                   c.players, "nfl",
+                                   learned=blend_mod.unless_fit_on(blend_mod.load_learned(cfg.get("learned_blend")), se, wk),
+                                   calib=blend_mod.unless_fit_on(blend_mod.load_calibration(cfg["calibration"]), se, wk)
+                                   if cfg.get("calibration") else {},
+                                   weight_override=cfg.get("forecast_weight_override"))
             proj.update(newp)
     # 3. late swap: players whose games have started stay in their slots, even if news calls them out
     def has_started(k: str) -> bool:

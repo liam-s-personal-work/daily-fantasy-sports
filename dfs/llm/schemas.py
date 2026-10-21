@@ -18,7 +18,7 @@ _FACT = {
                    "enum": ["out", "inactive", "injured_reserve", "suspended", "doubtful", "questionable",
                             "probable", "active", "none"]},
     },
-    "required": ["id", "subject", "kind", "text", "confidence"],
+    "required": ["id", "subject", "kind", "text", "confidence", "status"],
 }
 
 RESEARCH = {
