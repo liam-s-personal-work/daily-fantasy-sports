@@ -1,0 +1,175 @@
+# Saved contest rules: everything a lineup needs that is NOT in the DK/FD CSV.
+# Keyed "<site>.<sport>.<game_type>". Slot labels here are canonical; when an entries
+# file is supplied its own header labels and order win (and differences are reported).
+# confidence: high = confirmed on real 2026 site files; medium = secondary sources /
+# captured DK rule objects; low = old open-source encodings. Re-verify against the
+# contest's own rules page whenever confidence is not high (`dfs rules show <key>`).
+# Research notes and sources: docs/research/site_formats.md
+verified_on: 2026-10-21
+
+contests:
+  draftkings.nfl.classic:
+    salary_cap: 50000
+    slots: [[QB, [QB]], [RB, [RB]], [RB, [RB]], [WR, [WR]], [WR, [WR]], [WR, [WR]], [TE, [TE]], [FLEX, [RB, WR, TE]], [DST, [DST]]]
+    min_games: 2
+    min_teams: 2
+    late_swap: true
+    scoring: draftkings.nfl
+    confidence: high
+    sources: [https://www.draftkings.com/help/rules/1/1]
+  draftkings.nfl.showdown:
+    salary_cap: 50000
+    slots: [[CPT, [QB, RB, WR, TE, K, DST], 1.5, 1.5], [FLEX, [QB, RB, WR, TE, K, DST]], [FLEX, [QB, RB, WR, TE, K, DST]], [FLEX, [QB, RB, WR, TE, K, DST]], [FLEX, [QB, RB, WR, TE, K, DST]], [FLEX, [QB, RB, WR, TE, K, DST]]]
+    min_teams: 2
+    multiplier_rows: true
+    late_swap: false
+    scoring: draftkings.nfl
+    confidence: high
+    sources: [https://www.draftkings.com/help/rules/1/96]
+  fanduel.nfl.classic:
+    salary_cap: 60000
+    slots: [[QB, [QB]], [RB, [RB]], [RB, [RB]], [WR, [WR]], [WR, [WR]], [WR, [WR]], [TE, [TE]], [FLEX, [RB, WR, TE]], [DEF, [D]]]
+    max_per_team: 4
+    min_teams: 3
+    late_swap: true
+    scoring: fanduel.nfl
+    confidence: medium
+    sources: [https://www.fanduel.com/rules]
+  fanduel.nfl.single_game:
+    salary_cap: 60000
+    slots: [[MVP, [QB, RB, WR, TE, K, D], 1.5, 1.5], [FLEX, [QB, RB, WR, TE, K, D]], [FLEX, [QB, RB, WR, TE, K, D]], [FLEX, [QB, RB, WR, TE, K, D]], [FLEX, [QB, RB, WR, TE, K, D]], [FLEX, [QB, RB, WR, TE, K, D]]]
+    min_teams: 2
+    salary_column_by_slot: {MVP: "MVP 1.5x Salary"}
+    late_swap: false
+    scoring: fanduel.nfl
+    confidence: medium
+    notes: ["Format since Aug 2025: MVP + 5 FLEX, MVP 1.5x points and 1.5x salary."]
+    sources: [https://www.fanduel.com/research/fanduel-launches-new-single-game-daily-fantasy-format]
+  draftkings.cfb.classic:
+    salary_cap: 50000
+    slots: [[QB, [QB]], [RB, [RB]], [RB, [RB]], [WR, [WR]], [WR, [WR]], [WR, [WR]], [FLEX, [RB, WR]], [SUPERFLEX, [QB, RB, WR]]]
+    min_games: 2
+    min_teams: 2
+    late_swap: true
+    scoring: draftkings.cfb
+    confidence: medium
+    notes: ["TEs are listed as WR. Superflex header label unconfirmed; entries header wins."]
+  draftkings.cfb.showdown:
+    salary_cap: 50000
+    slots: [[CPT, [QB, RB, WR], 1.5, 1.5], [FLEX, [QB, RB, WR]], [FLEX, [QB, RB, WR]], [FLEX, [QB, RB, WR]], [FLEX, [QB, RB, WR]], [FLEX, [QB, RB, WR]]]
+    min_teams: 2
+    multiplier_rows: true
+    scoring: draftkings.cfb
+    confidence: medium
+  fanduel.cfb.classic:
+    salary_cap: 60000
+    slots: [[QB, [QB]], [RB, [RB]], [RB, [RB]], [WR, [WR]], [WR, [WR]], [WR, [WR]], [SUPERFLEX, [QB, RB, WR, TE]]]
+    late_swap: true
+    scoring: fanduel.cfb
+    confidence: medium
+  draftkings.nba.classic:
+    salary_cap: 50000
+    slots: [[PG, [PG]], [SG, [SG]], [SF, [SF]], [PF, [PF]], [C, [C]], [G, [PG, SG]], [F, [SF, PF]], [UTIL, [PG, SG, SF, PF, C]]]
+    min_games: 2
+    min_teams: 2
+    late_swap: true
+    scoring: draftkings.nba
+    confidence: high
+  draftkings.nba.showdown:
+    salary_cap: 50000
+    slots: [[CPT, [PG, SG, SF, PF, C], 1.5, 1.5], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]]]
+    min_teams: 2
+    multiplier_rows: true
+    scoring: draftkings.nba
+    confidence: medium
+  fanduel.nba.classic:
+    salary_cap: 60000
+    slots: [[PG, [PG]], [PG, [PG]], [SG, [SG]], [SG, [SG]], [SF, [SF]], [SF, [SF]], [PF, [PF]], [PF, [PF]], [C, [C]]]
+    max_per_team: 4
+    min_teams: 3
+    late_swap: true
+    scoring: fanduel.nba
+    confidence: medium
+  fanduel.nba.single_game:
+    salary_cap: 60000
+    slots: [[MVP, [PG, SG, SF, PF, C], 1.5, 1.5], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]], [UTIL, [PG, SG, SF, PF, C]]]
+    min_teams: 2
+    salary_column_by_slot: {MVP: "MVP 1.5x Salary"}
+    scoring: fanduel.nba
+    confidence: medium
+  draftkings.wnba.classic:
+    salary_cap: 50000
+    slots: [[G, [PG, SG, G]], [G, [PG, SG, G]], [F, [SF, PF, F, C]], [F, [SF, PF, F, C]], [F, [SF, PF, F, C]], [UTIL, [PG, SG, SF, PF, C, G, F]]]
+    min_games: 2
+    scoring: draftkings.nba
+    confidence: low
+  draftkings.mlb.classic:
+    salary_cap: 50000
+    slots: [[P, [SP, RP, P]], [P, [SP, RP, P]], [C, [C]], [1B, [1B]], [2B, [2B]], [3B, [3B]], [SS, [SS]], [OF, [OF]], [OF, [OF]], [OF, [OF]]]
+    min_games: 2
+    late_swap: true
+    scoring: draftkings.mlb
+    confidence: medium
+    notes: ["Max 5 hitters from one team (not yet enforced as a hitter-only cap)."]
+  fanduel.mlb.classic:
+    salary_cap: 35000
+    slots: [[P, [P]], [C/1B, [C, 1B]], [2B, [2B]], [3B, [3B]], [SS, [SS]], [OF, [OF]], [OF, [OF]], [OF, [OF]], [UTIL, [C, 1B, 2B, 3B, SS, OF]]]
+    max_per_team: 5
+    min_teams: 3
+    late_swap: true
+    scoring: fanduel.mlb
+    confidence: medium
+  draftkings.nhl.classic:
+    salary_cap: 50000
+    slots: [[C, [C]], [C, [C]], [W, [LW, RW, W]], [W, [LW, RW, W]], [W, [LW, RW, W]], [D, [D]], [D, [D]], [G, [G]], [UTIL, [C, LW, RW, W, D]]]
+    min_teams: 3
+    min_games: 2
+    late_swap: true
+    scoring: draftkings.nhl
+    confidence: medium
+  fanduel.nhl.classic:
+    salary_cap: 55000
+    slots: [[C, [C]], [C, [C]], [W, [W, LW, RW]], [W, [W, LW, RW]], [D, [D]], [D, [D]], [UTIL, [C, W, LW, RW, D]], [UTIL, [C, W, LW, RW, D]], [G, [G]]]
+    max_per_team: 4
+    min_teams: 3
+    late_swap: true
+    scoring: fanduel.nhl
+    confidence: medium
+  draftkings.pga.classic:
+    salary_cap: 50000
+    slots: [[G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]]]
+    scoring: draftkings.pga
+    confidence: medium
+  fanduel.pga.classic:
+    salary_cap: 60000
+    slots: [[G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]], [G, [G]]]
+    scoring: fanduel.pga
+    confidence: low
+  draftkings.mma.classic:
+    salary_cap: 50000
+    slots: [[F, [F]], [F, [F]], [F, [F]], [F, [F]], [F, [F]], [F, [F]]]
+    scoring: draftkings.mma
+    confidence: medium
+  draftkings.nascar.classic:
+    salary_cap: 50000
+    slots: [[D, [D]], [D, [D]], [D, [D]], [D, [D]], [D, [D]], [D, [D]]]
+    scoring: draftkings.nascar
+    confidence: low
+  draftkings.soccer.classic:
+    salary_cap: 50000
+    slots: [[GK, [GK]], [D, [D]], [D, [D]], [M, [M]], [M, [M]], [F, [F]], [F, [F]], [UTIL, [D, M, F]]]
+    min_teams: 3
+    scoring: draftkings.soccer
+    confidence: low
+  draftkings.tennis.classic:
+    salary_cap: 50000
+    slots: [[P, [P]], [P, [P]], [P, [P]], [P, [P]], [P, [P]], [P, [P]]]
+    scoring: draftkings.tennis
+    confidence: low
+  draftkings.cs2.showdown:
+    salary_cap: 50000
+    slots: [[CPT, [P], 1.5, 1.5], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]], [FLEX, [P]]]
+    max_per_team: 3
+    multiplier_rows: true
+    scoring: draftkings.cs2
+    confidence: low

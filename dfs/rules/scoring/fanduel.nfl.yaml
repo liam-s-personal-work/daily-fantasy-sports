@@ -1,0 +1,47 @@
+id: fanduel.nfl
+site: fanduel
+sport: nfl
+version: 2026-10-21
+verified:
+  status: partial   # fanduel.com/rules seen via search index (cache ~2025-05); 2024 yardage bonuses per FD research article
+  method: web search of fanduel.com/rules and FD-owned articles (see docs/research/scoring.md)
+sources:
+  - https://www.fanduel.com/rules
+  - https://www.fanduel.com/research/daily-fantasy-football-what-you-should-know-about-fanduel-s-updated-scoring-for-2024
+role_by_position: {QB: offense, RB: offense, WR: offense, TE: offense, FB: offense, D: dst, DEF: dst, DST: dst, K: kicker}
+roles:
+  offense:
+    linear:
+      pass_yds: 0.04
+      pass_td: 4
+      int_thrown: -1
+      rush_yds: 0.1
+      rush_td: 6
+      rec: 0.5
+      rec_yds: 0.1
+      rec_td: 6
+      return_td: 6
+      fumble_lost: -2
+      two_pt: 2
+      off_fumble_rec_td: 6
+    thresholds:
+      - {stat: pass_yds, gte: 300, pts: 3}
+      - {stat: rush_yds, gte: 100, pts: 3}
+      - {stat: rec_yds, gte: 100, pts: 3}
+  dst:
+    linear:
+      sack: 1
+      interception: 2
+      fumble_recovery: 2
+      return_td: 6
+      def_td: 6
+      safety: 2
+      blocked_kick: 2
+      two_pt_return: 2
+    tiers:
+      # FD formula: 6*(offensive TDs allowed + own-fumble-recovery TDs) + 2pt + XP + 3*FG
+      points_allowed: [[0, 0, 10], [1, 6, 7], [7, 13, 4], [14, 20, 1], [21, 27, 0], [28, 34, -1], [35, null, -4]]
+  kicker:
+    linear: {xp_made: 1}
+    buckets:
+      fg_made_distances: [[0, 39, 3], [40, 49, 4], [50, null, 5]]

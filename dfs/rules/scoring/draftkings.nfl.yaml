@@ -1,0 +1,48 @@
+id: draftkings.nfl
+site: draftkings
+sport: nfl
+version: 2026-10-21
+verified:
+  status: partial   # values reproduced against DK-published 2026 lineup scores; rules page not fetchable from the build env
+  method: web search of DK-owned pages + DK 2026 worked examples (see docs/research/scoring.md)
+sources:
+  - https://www.draftkings.com/help/rules/nfl
+  - https://dknetwork.draftkings.com/2025/08/27/nfl-dfs-beginners-guide-draftkings/
+role_by_position: {QB: offense, RB: offense, WR: offense, TE: offense, FB: offense, DST: dst, DEF: dst, K: kicker}
+roles:
+  offense:
+    linear:
+      pass_yds: 0.04
+      pass_td: 4
+      int_thrown: -1
+      rush_yds: 0.1
+      rush_td: 6
+      rec: 1
+      rec_yds: 0.1
+      rec_td: 6
+      return_td: 6
+      fumble_lost: -1
+      two_pt: 2
+      off_fumble_rec_td: 6
+    thresholds:
+      - {stat: pass_yds, gte: 300, pts: 3}
+      - {stat: rush_yds, gte: 100, pts: 3}
+      - {stat: rec_yds, gte: 100, pts: 3}
+  dst:
+    linear:
+      sack: 1
+      interception: 2
+      fumble_recovery: 2
+      return_td: 6        # punt/kick/FG return TD
+      def_td: 6           # INT-return, fumble-return, blocked-kick-return TDs
+      safety: 2
+      blocked_kick: 2
+      two_pt_return: 2
+    tiers:
+      # points allowed while the DST is on the field (excludes points the offense gives up)
+      points_allowed: [[0, 0, 10], [1, 6, 7], [7, 13, 4], [14, 20, 1], [21, 27, 0], [28, 34, -1], [35, null, -4]]
+  kicker:             # Showdown only. UNCONFIRMED on an official page; matches FD-style distance bands
+    unverified: true
+    linear: {xp_made: 1}
+    buckets:
+      fg_made_distances: [[0, 39, 3], [40, 49, 4], [50, null, 5]]

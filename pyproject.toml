@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dfs"
+version = "0.1.0"
+description = "Contest-file-driven DFS projection, research and lineup engine for DraftKings and FanDuel"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.6",
+  "PyYAML>=6",
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "scipy>=1.11",
+  "ortools>=9.10",
+]
+
+[project.optional-dependencies]
+data = ["nflreadpy>=0.1.5", "polars>=1.0", "pyarrow>=14"]
+agents = ["claude-agent-sdk>=0.2"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+dfs = "dfs.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dfs*"]
+
+[tool.setuptools.package-data]
+dfs = ["rules/registry/*.yaml", "rules/scoring/*.yaml", "llm/prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "network: needs outbound network (nflverse downloads)",
+  "live: makes real Claude calls (costs money); opt in with DFS_LIVE=1",
+]
+addopts = "-m 'not network and not live'"
