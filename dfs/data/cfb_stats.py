@@ -36,9 +36,13 @@ SCORING_STATS = ["pass_yds", "pass_td", "int_thrown", "rush_yds", "rush_td", "re
                  "fumble_lost", "two_pt", "return_td"]
 COUNT_STATS = ["pass_att", "pass_cmp", "pass_yds", "pass_td", "int_thrown", "sacks", "sack_yds", "carries",
                "carry_yds", "rush_att", "rush_yds", "rush_td", "targets", "rec", "rec_yds", "rec_td",
-               "fumble_lost", "two_pt", "return_td"]
+               "fumble_lost", "two_pt", "return_td",
+               # usage on competitive (non-garbage-time) snaps, see ``competitive_mask``
+               "c_pass_att", "c_sacks", "c_carries", "c_targets"]
 TEAM_STATS = ["team_pass_att", "team_dropbacks", "team_carries", "team_plays", "team_targets", "team_rec",
-              "team_pass_yds", "team_rush_yds"]
+              "team_pass_yds", "team_rush_yds", "team_c_pass_att", "team_c_dropbacks", "team_c_carries"]
+# Garbage time (Bill Connelly's CFB definition): the snap's margin exceeds this in the quarter.
+GARBAGE_MARGIN = {1: 43, 2: 37, 3: 27, 4: 21}
 OFFENSE_POS = {"QB", "RB", "WR", "TE", "FB", "ATH", "HB", "SB", "TB", "-", ""}
 FUMBLE_LOST_TYPES = {"Fumble Recovery (Opponent)", "Fumble Recovery (Opponent) Touchdown", "Fumble Return Touchdown"}
 RETURN_TD_TYPES = {"Punt Return Touchdown", "Kickoff Return Touchdown", "Kickoff Return (Offense) Touchdown"}
@@ -172,8 +176,13 @@ def build_team_indexes(pbp: pd.DataFrame, rosters: pd.DataFrame | None) -> dict[
     if rosters is not None and len(rosters):
         r = rosters.dropna(subset=["athlete_id", "team_id"])
         for row in r.itertuples(index=False):
-            nm = getattr(row, "display_name", None) or getattr(row, "full_name", None) or \
-                f"{getattr(row, 'first_name', '')} {getattr(row, 'last_name', '')}"
+            # ESPN roster ``display_name`` is the abbreviated form ("Je. Smith"); the full name is
+            # ``athlete_display_name`` / ``full_name``
+            nm = next((v for v in (getattr(row, "athlete_display_name", None), getattr(row, "full_name", None),
+                                   f"{getattr(row, 'first_name', '') or ''} {getattr(row, 'last_name', '') or ''}".strip())
+                       if isinstance(v, str) and v.strip()), None)
+            if nm is None:
+                continue
             idx[(int(row.season), int(row.team_id))].add(
                 row.athlete_id, nm, getattr(row, "jersey", None), getattr(row, "position_abbreviation", None),
                 getattr(row, "first_name", None), getattr(row, "last_name", None))
@@ -444,6 +453,32 @@ def classify_plays(pbp: pd.DataFrame, sack_yards: str = "yds_sacked") -> pd.Data
     return q
 
 
+def pre_snap_margin(pbp: pd.DataFrame) -> pd.Series:
+    """Offense's score margin before each play (pbp scores are after the play), aligned to ``pbp``."""
+    if not {"pos_team_score", "def_pos_team_score", "pos_team", "home"}.issubset(pbp.columns):
+        return pd.Series(0.0, index=pbp.index)
+    p = pbp
+    is_home = (p["pos_team"] == p["home"]).to_numpy()
+    ps = pd.to_numeric(p["pos_team_score"], errors="coerce")
+    ds = pd.to_numeric(p["def_pos_team_score"], errors="coerce")
+    home_after = pd.Series(np.where(is_home, ps, ds), index=p.index)
+    away_after = pd.Series(np.where(is_home, ds, ps), index=p.index)
+    order = ["game_id", "game_play_number"] if "game_play_number" in p.columns else ["game_id"]
+    o = p[order].assign(_h=home_after, _a=away_after).sort_values(order, kind="stable")
+    hb = o.groupby("game_id")["_h"].shift(1).fillna(0.0)
+    ab = o.groupby("game_id")["_a"].shift(1).fillna(0.0)
+    diff = (hb - ab).reindex(p.index)
+    return pd.Series(np.where(is_home, diff, -diff), index=p.index)
+
+
+def competitive_mask(pbp: pd.DataFrame) -> pd.Series:
+    """True for snaps outside garbage time (margin within ``GARBAGE_MARGIN`` for the quarter; OT always)."""
+    margin = pre_snap_margin(pbp).abs()
+    per = pd.to_numeric(pbp["period"], errors="coerce") if "period" in pbp.columns else pd.Series(1, index=pbp.index)
+    thr = per.map(GARBAGE_MARGIN).fillna(10 ** 6)
+    return (margin <= thr) | margin.isna()
+
+
 def scrimmage_plays(pbp: pd.DataFrame) -> pd.DataFrame:
     """Counting offensive plays (see ``classify_plays``)."""
     return classify_plays(pbp)
@@ -461,7 +496,9 @@ def player_game_lines(pbp: pd.DataFrame, rosters: pd.DataFrame | None = None,
     if indexes is None:
         indexes = build_team_indexes(pbp, rosters)
     stats = ParseStats()
+    comp_all = competitive_mask(pbp)
     p = classify_plays(pbp)
+    p["competitive"] = comp_all.reindex(p.index).fillna(True).astype(bool)
     p["team_id"] = _pos_team_id(p)
     p = p[p["team_id"].notna()]
     team = p["team_id"]
@@ -544,13 +581,14 @@ def player_game_lines(pbp: pd.DataFrame, rosters: pd.DataFrame | None = None,
         ev.append(d)
 
     one = pd.Series(1.0, index=p.index)
+    comp = p["competitive"].astype(float)
     add(rusher, {"carries": one, "carry_yds": rush_y, "rush_att": one, "rush_yds": rush_y,
-                 "rush_td": rush_td.astype(float)})
-    add(sacked, {"sacks": one, "sack_yds": yards, "rush_att": one, "rush_yds": yards})
+                 "rush_td": rush_td.astype(float), "c_carries": comp})
+    add(sacked, {"sacks": one, "sack_yds": yards, "rush_att": one, "rush_yds": yards, "c_sacks": comp})
     add(passer, {"pass_att": one, "pass_cmp": cmp_.astype(float), "pass_yds": yards.where(cmp_, 0.0),
-                 "pass_td": pass_td.astype(float), "int_thrown": intc.astype(float)})
+                 "pass_td": pass_td.astype(float), "int_thrown": intc.astype(float), "c_pass_att": comp})
     add(target, {"targets": one, "rec": cmp_.astype(float), "rec_yds": yards.where(cmp_, 0.0),
-                 "rec_td": pass_td.astype(float)})
+                 "rec_td": pass_td.astype(float), "c_targets": comp})
 
     # fumbles lost: scrimmage plays recovered by the opponent
     lost = p["play_type"].isin(FUMBLE_LOST_TYPES)
@@ -629,7 +667,10 @@ def player_game_lines(pbp: pd.DataFrame, rosters: pd.DataFrame | None = None,
                        "team_carries": rush.astype(float), "team_plays": (rush | att | sack).astype(float),
                        "team_targets": target.reindex(p.index).notna().astype(float),
                        "team_rec": cmp_.astype(float), "team_pass_yds": yards.where(cmp_, 0.0),
-                       "team_rush_yds": rush_y.where(rush, 0.0) + yards.where(sack, 0.0)})
+                       "team_rush_yds": rush_y.where(rush, 0.0) + yards.where(sack, 0.0),
+                       "team_c_pass_att": (att & p["competitive"]).astype(float),
+                       "team_c_dropbacks": ((att | sack) & p["competitive"]).astype(float),
+                       "team_c_carries": (rush & p["competitive"]).astype(float)})
     team_totals = tg.groupby(["season", "week", "game_id", "team_id"], as_index=False)[TEAM_STATS].sum()
     team_totals[["season", "week", "game_id", "team_id"]] = team_totals[["season", "week", "game_id", "team_id"]].astype("int64")
     return lines, team_totals, stats

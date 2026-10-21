@@ -43,29 +43,30 @@ SEASON_WEEKS = 18
 
 @dataclass(frozen=True)
 class NFLParams:
-    """Model hyper-parameters. Defaults were tuned on 2024-2025 (see dfs.backtest)."""
+    """Model hyper-parameters. Defaults were tuned on 2024-2025 weeks 3-17 by coordinate descent
+    (``dfs.backtest.coordinate_descent``; log in docs/results/nfl_baseline_tuning.json)."""
 
     # recency / history
-    half_life: float = 4.0  # weeks, player usage shares
-    eff_half_life: float | None = None  # weeks, efficiency rates (None: same as half_life)
+    half_life: float = 10.0  # weeks, player usage shares
+    eff_half_life: float | None = 16.0  # weeks, efficiency rates (None: same as half_life)
     season_gap: float = 8.0  # extra weeks of age between seasons
     lookback_seasons: int = 1  # prior seasons of player history
-    team_change_weight: float = 0.5  # weight of games played for another team (shares only)
+    team_change_weight: float = 0.25  # weight of games played for another team (shares only)
     exit_downweight: float = 0.35  # weight of games with snap share < half the player's norm
     # empirical-Bayes prior strengths (pseudo team-units for shares, own units for rates)
     n0_target: float = 25.0
-    n0_carry: float = 20.0
-    n0_td: float = 4.0  # pseudo team expected TDs
+    n0_carry: float = 15.0
+    n0_td: float = 1.0  # pseudo team expected TDs
     n0_catch: float = 30.0
-    n0_ypt: float = 50.0
-    n0_ypc: float = 80.0
-    n0_qb_rush: float = 40.0  # QB carry share when starting (pseudo team carries)
-    n0_qb_ypc: float = 20.0  # QB yards per carry (scrambles are a skill: shrink less than RBs)
+    n0_ypt: float = 25.0
+    n0_ypc: float = 40.0
+    n0_qb_rush: float = 80.0  # QB carry share when starting (pseudo team carries)
+    n0_qb_ypc: float = 5.0  # QB yards per carry (scrambles are a skill: shrink far less than RBs)
     td_actual_weight: float = 0.25  # weight of actual TDs vs ff_opportunity expected TDs in TD shares
     # redistribution
     gamma: float = 1.0
     cross_affinity_targets: float = 0.5
-    cross_affinity_carries: float = 0.1
+    cross_affinity_carries: float = 0.3
     max_target_share: float = 0.45
     max_carry_share: float = 0.90
     # team model
@@ -73,10 +74,10 @@ class NFLParams:
     team_k0: float = 8.0
     team_min_season: int = 2019
     # simulation dispersion
-    usage_cv: Mapping[str, float] = field(default_factory=lambda: {"QB": 0.12, "RB": 0.30, "WR": 0.32, "TE": 0.36})
-    eff_sd: Mapping[str, float] = field(default_factory=lambda: {"QB": 0.18, "RB": 0.18, "WR": 0.15, "TE": 0.15})
+    usage_cv: Mapping[str, float] = field(default_factory=lambda: {"QB": 0.06, "RB": 0.20, "WR": 0.38, "TE": 0.36})
+    eff_sd: Mapping[str, float] = field(default_factory=lambda: {"QB": 0.18, "RB": 0.18, "WR": 0.08, "TE": 0.08})
     catch_shape: float = 1.3  # gamma shape of yards per catch
-    carry_shape: float = 1.1  # gamma shape of (yards per carry + carry_shift)
+    carry_shape: float = 1.5  # gamma shape of (yards per carry + carry_shift)
     carry_shift: float = 2.0
     completion_shape: float = 1.6
     p_exit: Mapping[str, float] = field(default_factory=lambda: {"QB": 0.03, "RB": 0.05, "WR": 0.04, "TE": 0.04})
