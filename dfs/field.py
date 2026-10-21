@@ -190,6 +190,9 @@ class _Generator:
                             workers=1, time_limit_s=self.solve_time_s)
         self.n_solves += 1
         try:
+            if stack:  # dominance pruning is not exact under stack rules: solve the full pool
+                pts = {k: float(v) for k, v in zip(self.pruner.keys, vals)}
+                return solve(self.contest, pts, opts, label="field")
             return solve_pruned(self.contest, self.pruner, vals, opts, keep=keep, label="field")
         except Infeasible:
             if not stack:
@@ -263,7 +266,7 @@ def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadli
         return top3 - target_top3
 
     lo, hi, fixed = np.log(0.03), np.log(max_sigma), np.log(1.6)
-    sigma0 = min(sigma0, max_sigma)
+    sigma0 = float(np.exp(np.log(min(sigma0, max_sigma))))  # the same float the search looks up later
     ys, fs = [np.log(sigma0)], [f(sigma0)]
     while abs(fs[-1]) > tol and len(trace) < max_evals and time.perf_counter() < deadline:
         slope = (fs[-1] - fs[-2]) / (ys[-1] - ys[-2]) if len(ys) > 1 and ys[-1] != ys[-2] else 0.0

@@ -203,3 +203,31 @@ def test_sdk_backend_options_and_tool_counting(monkeypatch):
     assert sorted(a for a in o.allowed_tools if a.startswith("WebFetch(")) == sorted(
         f"WebFetch(domain:{d})" for d in FETCH_ALLOW_DOMAINS)
     assert set(o.tools) == {"WebSearch", "WebFetch"}  # no Bash/Read/Write/Edit available to agents
+
+
+def test_standings_captain_rows_do_not_double_count(tmp_path):
+    from dfs.grade import read_standings
+    p = tmp_path / "contest-standings.csv"
+    p.write_text("Rank,EntryId,EntryName,TimeRemaining,Points,Lineup,,Player,Roster Position,%Drafted,FPTS\n"
+                 "1,1,a,0,150.5,x,,Josh Allen,FLEX,61.20%,24.4\n"
+                 "2,2,b,0,140.0,x,,Josh Allen,CPT,22.80%,36.6\n"
+                 "3,3,c,0,120.0,x,,Dalton Kincaid,CPT,5.00%,15\n")
+    st = read_standings(p)
+    assert st.actual_fpts["josh allen"] == 24.4  # FLEX row, not the 1.5x captain row
+    assert st.ownership["josh allen"] == 61.2 and st.ownership["josh allen|CPT"] == 22.8
+    assert st.actual_fpts["dalton kincaid"] == 10.0  # only a captain row: divided back
+
+
+def test_user_rules_reject_unknown_keys():
+    from pydantic import ValidationError
+    from dfs.models import UserRules
+    with pytest.raises(ValidationError):
+        UserRules(lock=["X"], bring_back=1)  # a typo or an unsupported rule is an error, not ignored
+    with pytest.raises(ValidationError):
+        UserRules(max_exposure={"X": 0.3})
+
+
+def test_update_blend_keeps_prior_without_evidence(tmp_path):
+    st = update_blend(tmp_path / "b.json", "nfl", [{"position": "QB", "baseline_err": 1.0, "forecast_err": 1.0}] * 40,
+                      prior_weight=0.85)
+    assert st["nfl"]["QB"]["weight"] == 0.85

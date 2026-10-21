@@ -46,6 +46,7 @@ def read_standings(path: str | Path) -> Standings:
         ipl, iown, ifp = head.index("Player"), head.index("%Drafted"), head.index("FPTS")
     except ValueError:
         ipl = iown = ifp = None
+    irp = head.index("Roster Position") if "Roster Position" in head else None
     for r in rows[1:]:
         if len(r) > ip and r[ip].strip():
             try:
@@ -54,6 +55,13 @@ def read_standings(path: str | Path) -> Standings:
                 pass
         if ipl is not None and len(r) > ifp and r[ipl].strip():
             name = norm_name(r[ipl])
+            slot = r[irp].strip().upper() if irp is not None and len(r) > irp else ""
+            if slot.startswith(("CPT", "MVP")):
+                # Showdown/single game: the captain row carries the multiplied score; the player's own
+                # points come from his FLEX row (or the captain row divided by 1.5 if he has none)
+                own[f"{name}|{slot[:3]}"] = float(r[iown].strip().rstrip("%") or 0)
+                fpts.setdefault(name, float(r[ifp] or 0) / 1.5)
+                continue
             own[name] = float(r[iown].strip().rstrip("%") or 0)
             fpts[name] = float(r[ifp] or 0)
     return Standings(scores=np.array(scores, dtype=float), ownership=own, actual_fpts=fpts)
@@ -158,7 +166,10 @@ def update_blend(path: str | Path, sport: str, errors: list[dict], prior_weight:
             rec["sse_forecast"] += r["forecast_err"] ** 2
         rec["n"] += len(rows)
         lam = n0 * rec["sxx"] / max(rec["n"], 1)
-        w = (rec["sxy"] + lam * rec.get("prior", prior_weight)) / max(rec["sxx"] + lam, 1e-9)
+        if rec["sxx"] < 1e-9:  # the forecast never differed from the baseline: no evidence, keep the prior
+            w = rec.get("prior", prior_weight)
+        else:
+            w = (rec["sxy"] + lam * rec.get("prior", prior_weight)) / (rec["sxx"] + lam)
         rec["weight"] = round(min(max(w, 0.0), 1.0), 4)
         rec["mae_note"] = "weights are learned on graded 2026 games only (after the model's training cutoff)"
     path.parent.mkdir(parents=True, exist_ok=True)

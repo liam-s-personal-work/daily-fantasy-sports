@@ -202,13 +202,15 @@ def test_simulation_correlation_and_psd(toy_contest):
     contest, projs = toy_contest
     keys, sims = simulate(projs, contest.players, "nfl", n_sims=20000, seed=3)
     assert sims.shape == (20000, len(keys)) and np.isfinite(sims).all()
-    qb = keys.index("T00:QB0")
-    wr = keys.index("T00:WR0")
+    top = lambda pos: max((k for k in keys if k.startswith(f"T00:{pos}")), key=lambda k: projs[k].mean)
+    qb, wr = keys.index(top("QB")), keys.index(top("WR"))  # the starters carry the stack correlation
     opp_dst = keys.index("T01:DST0")
     r = np.corrcoef(sims[:, qb], sims[:, wr])[0, 1]
     assert 0.25 < r < 0.5
     assert np.corrcoef(sims[:, qb], sims[:, opp_dst])[0, 1] < -0.15
-    c = build_correlation([contest.players[k] for k in keys], "nfl")
+    backup_qb = keys.index(min((k for k in keys if k.startswith("T00:QB")), key=lambda k: projs[k].mean))
+    assert abs(np.corrcoef(sims[:, backup_qb], sims[:, wr])[0, 1]) < 0.15  # backups get a fraction
+    c = build_correlation([contest.players[k] for k in keys], "nfl", means=[projs[k].mean for k in keys])
     assert np.linalg.eigvalsh(c).min() > 0
 
 

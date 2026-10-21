@@ -61,11 +61,14 @@ def _base(exclude: set[str], user_rules: UserRules | None, slot_locks: dict[int,
 _POOLS: dict[tuple, tuple[list[Lineup], list[Lineup]]] = {}
 
 
-def _pool_key(contest: Contest, proj: dict[str, Projection], base: SolveOptions, seed: int) -> tuple:
-    means = tuple(sorted((k, round(p.mean, 4)) for k, p in proj.items()))
+def _pool_key(contest: Contest, proj: dict[str, Projection], base: SolveOptions, seed: int,
+              fm: FieldModel | None = None, sizes: tuple = ()) -> tuple:
+    dist = tuple(sorted((k, round(p.mean, 4), round(p.p10, 3), round(p.p50, 3), round(p.p90, 3), round(p.p_zero, 4))
+                        for k, p in proj.items()))
     ur = base.user_rules.model_dump_json() if base.user_rules else ""
-    return (contest.source_file, hash(means), tuple(sorted(base.exclude_keys)), ur,
-            tuple(sorted(base.slot_locks.items())), seed)
+    field_id = (len(fm.lineups), hash(tuple(round(float(w), 6) for w in fm.weights))) if fm is not None else None
+    return (contest.source_file, contest.rules.game_type, contest.rules.salary_cap, hash(dist),
+            tuple(sorted(base.exclude_keys)), ur, tuple(sorted(base.slot_locks.items())), seed, field_id, sizes)
 
 
 def candidates(contest: Contest, proj: dict[str, Projection], *, base: SolveOptions, fm: FieldModel | None,
@@ -74,7 +77,7 @@ def candidates(contest: Contest, proj: dict[str, Projection], *, base: SolveOpti
     """(candidates, sim-optimal lineups), built on their own simulated draws (seed + 1).
     Pools are memoised per (numbers, exclusions, rules, locks), so the drafts, the final choice
     and the top-3 table share one set of solves."""
-    key = _pool_key(contest, proj, base, seed)
+    key = _pool_key(contest, proj, base, seed, fm, (n_mean, n_draws, n_half))
     if key in _POOLS:
         pool, draws = _POOLS[key]
         return [lu.model_copy(deep=True) for lu in pool], draws
@@ -140,10 +143,14 @@ def evaluate(lineups: list[Lineup], keys: list[str], sims: np.ndarray, fm: Field
 
 
 def three_drafts(contest: Contest, proj: dict[str, Projection], keys: list[str], sims: np.ndarray,
-                 fm: FieldModel | None, *, target_top: float, seed: int = 0) -> list[Lineup]:
-    """Each draft is built alone from the blended numbers under one lens."""
-    base = _base(set(), None, None, contest)
+                 fm: FieldModel | None, *, target_top: float, seed: int = 0, exclude: set[str] = frozenset(),
+                 slot_locks: dict[int, str] | None = None) -> list[Lineup]:
+    """Each draft is built alone from the blended numbers under one lens (``exclude``: players who can no
+    longer be added, e.g. their game has started)."""
+    base = _base(set(exclude), None, slot_locks, contest)
     pool, _ = candidates(contest, proj, base=base, fm=fm, seed=seed)
+    if not pool:
+        raise Infeasible("no legal draft from the players still available")
     if fm is None:
         top = sorted(pool, key=lambda lu: -lu.mean)[:3]
         return [lu.model_copy(update={"label": f"Draft {'ABC'[i]}"}) for i, lu in enumerate(top)]
@@ -158,10 +165,11 @@ def three_drafts(contest: Contest, proj: dict[str, Projection], keys: list[str],
 
 
 def top_candidates_by_slot(contest: Contest, proj: dict[str, Projection], *, k: int = 3, seed: int = 0,
-                           fm: FieldModel | None = None) -> dict[str, list[dict]]:
+                           fm: FieldModel | None = None, exclude: set[str] = frozenset(),
+                           slot_locks: dict[int, str] | None = None) -> dict[str, list[dict]]:
     """For each slot, the k players most often in the best lineup of a simulated outcome
-    (re-uses the sim-optimal lineups of the unconstrained candidate pool)."""
-    _, draws = candidates(contest, proj, base=_base(set(), None, None, contest), fm=fm, seed=seed)
+    (re-uses the sim-optimal lineups of the candidate pool)."""
+    _, draws = candidates(contest, proj, base=_base(set(exclude), None, slot_locks, contest), fm=fm, seed=seed)
     rates = sx.rates_from_lineups(contest, draws, {kk: p.mean for kk, p in proj.items()}, top_n=k)
     out: dict[str, list[dict]] = {}
     for r in rates.table:

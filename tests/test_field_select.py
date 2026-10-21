@@ -490,3 +490,12 @@ def test_late_swap_keeps_caller_slot_locks(toy):
                     now, opts=SolveOptions(slot_locks=keep))
     assert res.lineup.slots[open_i] == lu.slots[open_i]
     assert check_legal(contest, res.lineup) == []
+
+
+def test_sim_optimal_lineups_report_projected_means(toy_contest):
+    contest, projs = toy_contest
+    keys, sims = simulate(projs, contest.players, "nfl", n_sims=5, seed=4)
+    means = np.array([projs[k].mean for k in keys])
+    from dfs.select import sim_optimal
+    for lu in sim_optimal(contest, keys, sims, means, 1.0):
+        assert lu.mean == pytest.approx(sum(projs[s.player_key].mean * s.points_multiplier for s in lu.slots), abs=1e-2)

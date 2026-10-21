@@ -121,6 +121,7 @@ def sim_optimal(contest: Contest, keys: Sequence[str], draws: np.ndarray, means:
     """Optimal lineup on each draw (row of ``draws``), optionally shrunk toward ``means``."""
     opts = _base_opts(base)
     pruner = Pruner(contest, keys)
+    col = {k: j for j, k in enumerate(keys)}
     out = []
     for i, d in enumerate(draws):
         if out and deadline and time.perf_counter() > deadline:
@@ -128,6 +129,9 @@ def sim_optimal(contest: Contest, keys: Sequence[str], draws: np.ndarray, means:
         vals = _masked(means + shrink * (d.astype(float) - means), keys, opts)
         lu = _solve(contest, pruner, vals, opts, set(), f"{label}{i + 1}")
         if lu is not None:
+            # Lineup.mean is always the projected mean, not the score on the draw it was built for
+            lu.mean = round(sum(float(means[col[s.player_key]]) * s.points_multiplier for s in lu.slots
+                                if s.player_key in col), 3)
             out.append(lu)
     return out
 

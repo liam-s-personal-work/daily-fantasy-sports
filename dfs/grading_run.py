@@ -134,20 +134,28 @@ def grade_run(run_dir: Path, standings: str | None = None, update: bool = True,
         res["percentile_note"] = "against the simulated field (a model), not the real contest"
 
     # projection accuracy on players who played
+    from dfs.blend import calibrate, forecast_to_projection, load_calibration
+    from dfs.sim import canonical_pos
+    sport = c.rules.sport
+    calib = load_calibration(cfg["calibration"]) if cfg.get("calibration") else {}
     rows = []
     for k, pr in proj.items():
         if k in actual and k in c.players:
-            rows.append({"key": k, "pos": c.players[k].positions[0], "proj": pr.mean, "p10": pr.p10, "p90": pr.p90,
+            pos = canonical_pos(c.players[k].positions[0], sport)
+            f = st["forecasts"].get(k)
+            rows.append({"key": k, "pos": pos, "proj": pr.mean, "p10": pr.p10, "p90": pr.p90,
                          "actual": actual[k], "baseline": baseline[k].mean if k in baseline else None,
-                         "forecast": st["forecasts"][k].likely if k in st["forecasts"] else None})
+                         # the forecast as it entered the blend: calibrated, availability included
+                         "forecast": forecast_to_projection(calibrate(f, calib, sport, pos)).mean if f else None})
     played = [r for r in rows if r["actual"] != 0.0]
     res["projection_mae_played"] = round(float(np.mean([abs(r["actual"] - r["proj"]) for r in played])), 3) if played else None
     res["band_coverage_played"] = round(float(np.mean([r["p10"] <= r["actual"] <= r["p90"] for r in played])), 3) if played else None
 
     if update and st["forecasts"]:
+        # Both means include the chance of not playing, so players who scored 0 stay in.
         errs = [{"position": r["pos"], "baseline_err": r["actual"] - r["baseline"],
-                 "forecast_err": r["actual"] - st["forecasts"][r["key"]].likely}
-                for r in played if r["baseline"] is not None and r["forecast"] is not None]
+                 "forecast_err": r["actual"] - r["forecast"]}
+                for r in rows if r["baseline"] is not None and r["forecast"] is not None]
         if errs:
             from dfs.blend import PRIOR_FORECAST_WEIGHT
             update_blend(learned_dir / "blend.json", c.rules.sport, errs,

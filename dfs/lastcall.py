@@ -103,7 +103,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         if refreshed:
             newp = blend_mod.blend({k: st["baseline"][k] for k in refreshed if k in st["baseline"]}, refreshed,
                                    c.players, "nfl", learned=blend_mod.load_learned(cfg.get("learned_blend")),
-                                   calib=blend_mod.load_calibration(cfg.get("calibration")))
+                                   calib=blend_mod.load_calibration(cfg["calibration"]) if cfg.get("calibration") else {})
             proj.update(newp)
     # 3. late swap: players whose games have started stay in their slots, even if news calls them out
     def has_started(k: str) -> bool:

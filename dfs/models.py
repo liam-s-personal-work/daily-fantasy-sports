@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Site(str, Enum):
@@ -196,7 +196,10 @@ class Lineup(BaseModel):
 
 
 class UserRules(BaseModel):
-    """The user's own pick rules, solved as a second lineup."""
+    """The user's own pick rules, solved as a second lineup. Unknown keys are an error (a typo must not
+    be silently ignored)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     lock: list[str] = Field(default_factory=list)  # player names/keys that must be in
     exclude: list[str] = Field(default_factory=list)
@@ -205,4 +208,3 @@ class UserRules(BaseModel):
     max_from_team: int | None = None
     min_salary: int | None = None
     stack: list[dict] = Field(default_factory=list)  # e.g. {"team": "BUF", "positions": ["QB","WR"], "min": 2}
-    max_exposure: dict[str, float] = Field(default_factory=dict)

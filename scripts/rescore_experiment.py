@@ -52,8 +52,15 @@ def main() -> None:
     path.with_name(stem + ".md").write_text(text + "\n")
     print(text)
     if a.update:
+        # Learn on the forecast as the blend uses it: calibrated ranges, availability included.
+        from dfs.blend import calibrate, forecast_to_projection, load_calibration
+        from dfs.models import Forecast
+        cal = load_calibration()
         d = out.dropna(subset=["f_mean"])
-        errs = [{"position": r.pos, "baseline_err": r.actual - r.b_mean, "forecast_err": r.actual - r.f_mean}
+        errs = [{"position": r.pos, "baseline_err": r.actual - r.b_mean,
+                 "forecast_err": r.actual - forecast_to_projection(calibrate(
+                     Forecast(player_key=r.key, low=r.f_low, likely=r.f_likely, high=r.f_high, p_dnp=r.f_pdnp),
+                     cal, "nfl", r.pos)).mean}
                 for r in d.itertuples()]
         p = LEARNED_DIR / "blend.json"
         p.unlink(missing_ok=True)

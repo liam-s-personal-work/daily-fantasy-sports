@@ -17,6 +17,7 @@ from pathlib import Path
 
 from dfs.distributions import mixture_mean
 from dfs.models import Forecast, Player, Projection
+from dfs.sim import canonical_pos
 
 PRIOR_FORECAST_WEIGHT = {"nfl": 0.85, "cfb": 1.0}
 MIN_LEARNED_N = 30  # the learned weight is already shrunk toward the prior; this only guards tiny samples
@@ -68,7 +69,7 @@ def blend(baseline: dict[str, Projection], forecast: dict[str, Forecast], player
     for k in set(baseline) | set(forecast):
         b = baseline.get(k)
         f = forecast.get(k)
-        pos = players[k].positions[0] if k in players and players[k].positions else "?"
+        pos = canonical_pos(players[k].positions[0], sport) if k in players and players[k].positions else "?"
         if f is not None:
             f = calibrate(f, calib, sport, pos)
         if f is None or b is None:

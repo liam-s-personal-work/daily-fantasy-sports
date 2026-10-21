@@ -69,7 +69,9 @@ class Decider:
         """Contest-objective lineup(s); adjusted points rescale that player's simulated outcomes."""
         scale = {k: points[k] / self.proj[k].mean for k in points
                  if k in self.proj and self.proj[k].mean > 0 and abs(points[k] - self.proj[k].mean) > 1e-9}
-        proj = {k: (self.proj[k].model_copy(update={"mean": points[k]}) if k in scale else self.proj[k])
+        def scaled(p: Projection, f: float) -> Projection:  # the two-piece mean is linear in the quantiles
+            return p.model_copy(update={"mean": p.mean * f, "p10": p.p10 * f, "p50": p.p50 * f, "p90": p.p90 * f})
+        proj = {k: (scaled(self.proj[k], scale[k]) if k in scale else self.proj[k])
                 for k in points if k in self.proj}
         res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=kind or self.kind,
                                target_top=self.cfg.target_top, n=n or 1, exclude=set(exclude) | self.started,
@@ -87,9 +89,21 @@ class Decider:
         means = self._means()
 
         # Three drafts, each built alone from the blended numbers under a different lens.
-        drafts = sel.three_drafts(c, self.proj, self.keys, self.sims, self.field, target_top=cfg.target_top,
-                                  seed=cfg.seed)
-        top3 = sel.top_candidates_by_slot(c, self.proj, k=3, seed=cfg.seed, fm=self.field)
+        try:
+            drafts = sel.three_drafts(c, self.proj, self.keys, self.sims, self.field, target_top=cfg.target_top,
+                                      seed=cfg.seed, exclude=self.started)
+            top3 = sel.top_candidates_by_slot(c, self.proj, k=3, seed=cfg.seed, fm=self.field, exclude=self.started)
+        except Infeasible:  # late swap with too few open games: drafts are built around the locked entries
+            from dfs.pipeline import entry_lock_groups
+            groups = [(locks, idx) for locks, idx in entry_lock_groups(c, self.now).items() if locks]
+            if not groups:
+                raise
+            self._fallback_locks = dict(max(groups, key=lambda g: len(g[1]))[0])
+            self.report["built_around_locks"] = self._fallback_locks
+            drafts = sel.three_drafts(c, self.proj, self.keys, self.sims, self.field, target_top=cfg.target_top,
+                                      seed=cfg.seed, exclude=self.started, slot_locks=self._fallback_locks)
+            top3 = sel.top_candidates_by_slot(c, self.proj, k=3, seed=cfg.seed, fm=self.field, exclude=self.started,
+                                              slot_locks=self._fallback_locks)
         self.report["drafts"] = [d.model_dump() for d in drafts]
         self.report["top3_by_slot"] = top3
         top3_text = sel.format_top3(c, top3)
@@ -165,7 +179,13 @@ class Decider:
         rules_lu = None
         if cfg.user_rules is not None:
             try:
-                rules_lu, _ = self._choose(means, excluded, "your rules", user_rules=cfg.user_rules)
+                # your own locks win over the agents' cuts (players whose games started stay excluded)
+                from dfs.optimize.ilp import validate_rules, _resolve_names
+                validate_rules(c, cfg.user_rules)
+                mine = _resolve_names(c, list(cfg.user_rules.lock))
+                if mine & excluded:
+                    self.report["user_overrode_cuts"] = sorted(mine & excluded)
+                rules_lu, _ = self._choose(means, excluded - mine, "your rules", user_rules=cfg.user_rules)
             except Infeasible as e:
                 self.report["user_rules_error"] = str(e)
         legal = check_legal(c, final)
