@@ -245,8 +245,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     clock.mark(f"baseline ({ctx.data_source}): {len(ctx.baseline)} players, {len(ctx.ruled_out)} ruled out")
     no_time = sum(1 for p in contest.players.values() if p.start_time is None)
     if no_time and contest.rules.late_swap and not ctx.kickoffs:
-        contest.warnings.append(f"kickoff times unknown for {no_time} players (FanDuel files carry none): late swap "
-                                "cannot tell which games have started, so do not re-upload after the first game starts")
+        w = (f"kickoff times unknown for {no_time} players (FanDuel files carry none): late swap cannot tell which "
+             "games have started, so do not re-upload after the first game starts")
+        contest.warnings.append(w)
+        log(f"WARNING: {w}")
     if ctx.kickoffs and any(p.start_time is None for p in contest.players.values()):
         # FD files have no kickoff times; late swap and the last-call windows need them
         for p in contest.players.values():

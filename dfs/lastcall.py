@@ -51,13 +51,15 @@ def load_run(run_dir: Path) -> dict[str, Any]:
 
 
 def lastcall(run_dir: Path, *, threshold: float = 0.01, web: bool = True, now: datetime | None = None,
+             entries_file: str | Path | None = None,
              backend: Backend | None = None, extra_out: set[str] | None = None,
              log: Callable[[str], None] = print) -> dict[str, Any]:
     return asyncio.run(lastcall_async(run_dir, threshold=threshold, web=web, now=now, backend=backend,
-                                      extra_out=extra_out, log=log))
+                                      extra_out=extra_out, log=log, entries_file=entries_file))
 
 
 async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = True, now: datetime | None = None,
+                         entries_file: str | Path | None = None,
                          backend: Backend | None = None, extra_out: set[str] | None = None,
                          log: Callable[[str], None] = print) -> dict[str, Any]:
     st = load_run(run_dir)
@@ -118,6 +120,12 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         return {i: s.site_id for i, s in enumerate(lu.slots) if has_started(s.player_key)}
 
     started_all = {k for k in c.players if has_started(k)}
+    warnings: list[str] = []
+    no_time = sorted(c.players[k].name for k in picks if c.players[k].start_time is None)
+    if no_time and c.rules.late_swap:
+        warnings.append(f"kickoff times unknown for {len(no_time)} picks ({', '.join(no_time[:5])}...): started players "
+                        "cannot be told apart, so do not upload this file after the first game starts")
+        log(f"WARNING: {warnings[-1]}")
     locked = {s.player_key for s in final.slots if has_started(s.player_key)}
     started = started_all - locked
     swap_out = out - started_all  # ruled out and still replaceable
@@ -177,10 +185,21 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
             repaired += 1
             final_lus.append(fixed)
     from dfs.pipeline import started_ids
-    path = write_upload(c, final_lus, run_dir / "upload_final.csv", only_changed=False,
+    # Check the new file against what the site holds now: the run's own upload (assumed entered), or
+    # a freshly downloaded entries file when one is given (its LOCKED marks are the site's truth).
+    eids = st["report"].get("entry_ids") or [e.entry_id for e in c.entries][:len(entry_lus)]
+    held = {eid: [s.site_id for s in lu.slots] for eid, lu in zip(eids, entry_lus)}
+    site = c.model_copy(update={"entries": [e.model_copy(update={"current": held.get(e.entry_id, e.current),
+                                                                 "locked": [False] * len(e.current)})
+                                            for e in c.entries]})
+    if entries_file:
+        from dfs.io.contest_file import load_contest
+        fresh = {e.entry_id: e for e in load_contest(entries_file).entries}
+        site = c.model_copy(update={"entries": [fresh.get(e.entry_id, e) for e in c.entries]})
+    path = write_upload(site, final_lus, run_dir / "upload_final.csv", only_changed=False,
                         entry_ids=st["report"].get("entry_ids"), started_ids=started_ids(c, now))
     summary = {"now": now.isoformat(), "news": news, "out": sorted(out), "affected": sorted(affected),
-               "out_but_locked": sorted(out & started_all), "news_failed": news_failed,
+               "out_but_locked": sorted(out & started_all), "news_failed": news_failed, "warnings": warnings,
                "news_checked": bool(web) and not news_failed,
                "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired},
                "reforecast": sorted(refreshed), "locked": sorted(locked), "changed": change,

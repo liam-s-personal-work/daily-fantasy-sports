@@ -73,7 +73,8 @@ def _run(args) -> int:
 
 def _lastcall(args) -> int:
     from dfs.lastcall import lastcall
-    out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web, now=_now(args.now))
+    out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web, now=_now(args.now),
+                   entries_file=args.entries)
     from dfs.lastcall import load_run
     c = load_run(Path(args.run_dir))["contest"]
     if out.get("news_failed"):
@@ -143,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("lastcall"); s.add_argument("run_dir"); s.add_argument("--threshold", type=float, default=0.01)
     s.add_argument("--no-web", action="store_true")
-    s.add_argument("--now", help="ISO time to run as; default: the real time"); s.set_defaults(fn=_lastcall)
+    s.add_argument("--now", help="ISO time to run as; default: the real time")
+    s.add_argument("--entries", help="a freshly downloaded entries file (the site's current lineups and LOCKED cells)")
+    s.set_defaults(fn=_lastcall)
 
     s = sub.add_parser("windows"); s.add_argument("run_dir"); s.add_argument("--lead", type=int, default=60)
     s.set_defaults(fn=_windows)

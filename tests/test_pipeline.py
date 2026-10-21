@@ -317,3 +317,19 @@ def test_checker_failures_after_two_revisions_stay_excluded(cfg):
     res = run(FIX / "dk_salaries_classic.csv", cfg, backend=be, log=lambda s: None)
     assert len(failed) == 3 and res.report["decision"].get("used_backup") is True
     assert not set(failed) & set(res.final.player_keys)  # the third verified failure is excluded too
+
+
+def test_lastcall_after_kickoff_checks_against_the_uploaded_lineups(cfg):
+    morning = datetime(2026, 10, 25, 8, 0, tzinfo=ET_)
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None, now=morning)
+    uploaded = _cells(res.upload_path)
+    after = datetime(2026, 10, 25, 13, 5, tzinfo=ET_)  # 1 PM games under way; our upload holds started players
+    out = lastcall(res.run_dir, web=True, now=after, backend=fake(), log=lambda s: None)
+    assert out["changed"] in (True, False)
+    final = _cells(res.run_dir / "upload_final.csv")
+    c = res.contest
+    live = {x.site_id for x in c.candidates if c.players[x.player_key].start_time <= after}
+    for eid, cells in uploaded.items():
+        for was, now_id in zip(cells, final[eid]):
+            if was in live:
+                assert now_id == was  # started cells of the uploaded lineup stay

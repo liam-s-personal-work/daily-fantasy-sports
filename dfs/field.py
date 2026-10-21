@@ -266,8 +266,8 @@ def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadli
         return top3 - target_top3
 
     lo, hi, fixed = np.log(0.03), np.log(max_sigma), np.log(1.6)
-    sigma0 = float(np.exp(np.log(min(sigma0, max_sigma))))  # the same float the search looks up later
-    ys, fs = [np.log(sigma0)], [f(sigma0)]
+    sigma0 = min(sigma0, max_sigma)
+    ys, fs, sig = [np.log(sigma0)], [f(sigma0)], [sigma0]  # sig: the exact floats the pools are stored under
     while abs(fs[-1]) > tol and len(trace) < max_evals and time.perf_counter() < deadline:
         slope = (fs[-1] - fs[-2]) / (ys[-1] - ys[-2]) if len(ys) > 1 and ys[-1] != ys[-2] else 0.0
         if slope < -1e-6:
@@ -278,12 +278,13 @@ def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadli
         if np.isclose(y, ys).any():
             break
         ys.append(y)
-        fs.append(f(float(np.exp(y))))
+        sig.append(float(np.exp(y)))
+        fs.append(f(sig[-1]))
     best = int(np.argmin(np.abs(fs)))
     above = [i for i in range(len(fs)) if fs[i] > 0]
     below = [i for i in range(len(fs)) if fs[i] < 0]
     if abs(fs[best]) <= tol or not above or not below:
-        sigma = float(np.exp(ys[best]))
+        sigma = sig[best]
         return sigma, pools[sigma], trace
     i = min(above, key=lambda j: fs[j])
     j = max(below, key=lambda j: fs[j])
