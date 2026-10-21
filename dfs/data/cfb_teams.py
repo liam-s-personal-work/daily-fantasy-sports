@@ -17,6 +17,7 @@ import difflib
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Mapping
 
 import pandas as pd
 
@@ -207,6 +208,15 @@ def _ordered_abbrev_score(code: str, words: list[str]) -> float:
     return round(max(0.0, 0.88 - 0.08 * jumps - 0.1 * uncovered), 4)
 
 
+def _utc(t) -> pd.Timestamp | None:
+    if t is None or (not isinstance(t, pd.Timestamp) and pd.isna(t)):
+        return None
+    t = pd.Timestamp(t)
+    if pd.isna(t):
+        return None
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+
+
 _GAME_RX = re.compile(r"^\s*(?P<away>.+?)\s*@\s*(?P<home>.+?)(?:\s+\d{1,2}/\d{1,2}/\d{2,4}.*)?\s*$")
 
 
@@ -220,15 +230,23 @@ def split_slate_game(game: str) -> tuple[str, str]:
 
 def match_slate(slate_games: list[str], teams: pd.DataFrame, schedules: pd.DataFrame, season: int | None = None,
                 week: int | None = None, near: pd.Timestamp | None = None, min_score: float = 0.6,
-                overrides: dict[str, int] | None = None) -> TeamMatchReport:
+                overrides: dict[str, int] | None = None,
+                game_times: Mapping[str, pd.Timestamp] | None = None) -> TeamMatchReport:
     """Match each slate game ``AWAY@HOME`` (site codes) to one scheduled game and both team ids.
 
-    Candidates: the scheduled games of ``week`` (else of the whole season; a pair of opponents
-    nearly always meets once, and when not, the game nearest ``near`` wins). Each slate game is
+    Candidates: the scheduled games of ``week`` (else of the whole season). Each slate game is
     scored against every candidate as (weaker side, sum) of the two code scores, home/away
     reversal allowed (penalised unless the venue is neutral). Games are then assigned globally,
     most confident first, each scheduled game used at most once and each code kept to one team.
     ``overrides`` pins codes to team ids.
+
+    Dates come first, names second. A slate game with a listed kickoff (``game_times``; DK files
+    carry it) prefers scheduled games within 36 hours of it, falls back to games within 8 days
+    (postponements) and never takes a game further away. With the week not given, games without a
+    kickoff (FD lists) are held to the slate's consensus week, the most common week of a first
+    matching pass, once one exists. So a code that reads more like another school cannot pull in
+    that school's game from another week: such a slate game is reported unmatched instead.
+    ``near`` breaks remaining ties by date.
     """
     s = schedules
     if season is not None and "season" in s.columns:
@@ -238,8 +256,10 @@ def match_slate(slate_games: list[str], teams: pd.DataFrame, schedules: pd.DataF
     s = s.dropna(subset=["home_id", "away_id"]).copy()
     s["home_id"] = s["home_id"].astype("int64")
     s["away_id"] = s["away_id"].astype("int64")
+    s["kick_utc"] = pd.to_datetime(s["start_date"], utc=True, errors="coerce") if "start_date" in s.columns else pd.NaT
     tm = TeamMatcher(teams, schedules)
-    rep = TeamMatchReport()
+    near = _utc(near)
+    kicks = {str(g): _utc(t) for g, t in (game_times or {}).items() if _utc(t) is not None}
     cand_ids = sorted(set(s["home_id"]) | set(s["away_id"]))
     overrides = {str(k).upper(): int(v) for k, v in (overrides or {}).items()}
     cache: dict[str, dict[int, tuple[float, str]]] = {}
@@ -253,80 +273,105 @@ def match_slate(slate_games: list[str], teams: pd.DataFrame, schedules: pd.DataF
                                for tid in cand_ids for sc_, m_ in [tm.score(code, tid)]}
         return cache[code]
 
-    def dist(r) -> pd.Timedelta:
-        if near is None or "start_date" not in s.columns or pd.isna(r.start_date):
+    def dist(r, g: str) -> pd.Timedelta:
+        ref = kicks.get(g, near)
+        if ref is None or pd.isna(r.kick_utc):
             return pd.Timedelta(0)
-        t = pd.Timestamp(r.start_date)
-        t = t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
-        return abs(t - near)
+        return abs(r.kick_utc - ref)
 
-    options: dict[str, list[tuple]] = {}
+    def date_fit(r, g: str, consensus: int | None) -> int:
+        """2 = on the slate's date / week, 1 = allowed fallback, 0 = excluded."""
+        if g in kicks and pd.notna(r.kick_utc):
+            d = abs(r.kick_utc - kicks[g])
+            return 2 if d <= pd.Timedelta(hours=36) else (1 if d <= pd.Timedelta(days=8) else 0)
+        if consensus is None or pd.isna(r.week):
+            return 2
+        return 2 if int(r.week) == consensus else 0
+
     parsed: dict[str, tuple[str, str]] = {}
+    bad_games: list[dict] = []
     for g in slate_games:
         try:
-            away, home = split_slate_game(g)
+            parsed[g] = split_slate_game(g)
         except ValueError as e:
-            rep.unmatched.append({"game": g, "reason": str(e)})
-            continue
-        parsed[g] = (away, home)
-        a, h = sc(away), sc(home)
-        opts = []
-        for r in s.itertuples(index=False):
-            neutral = bool(getattr(r, "neutral_site", False))
-            for swapped in (False, True):
-                ta, th = (r.home_id, r.away_id) if swapped else (r.away_id, r.home_id)
-                (sa, ma), (sh, mh) = a.get(ta, (0.0, "")), h.get(th, (0.0, ""))
-                pen = 0.0 if (not swapped or neutral) else 0.05
-                lo = min(sa, sh) - pen
-                if lo >= min_score:
-                    opts.append((lo, sa + sh - pen, -dist(r).total_seconds(), int(r.game_id), int(ta), int(th),
-                                 swapped, (sa, ma), (sh, mh)))
-        opts.sort(reverse=True)
-        options[g] = opts
+            bad_games.append({"game": g, "reason": str(e)})
 
-    used_games: set[int] = set()
-    code_team: dict[str, int] = {}
-    pending = [g for g in parsed]
-    while pending:
-        def viable(g):
+    def assign(consensus: int | None) -> TeamMatchReport:
+        rep = TeamMatchReport(unmatched=list(bad_games))
+        options: dict[str, list[tuple]] = {}
+        for g, (away, home) in parsed.items():
+            a, h = sc(away), sc(home)
+            opts = []
+            for r in s.itertuples(index=False):
+                neutral = bool(getattr(r, "neutral_site", False))
+                for swapped in (False, True):
+                    ta, th = (r.home_id, r.away_id) if swapped else (r.away_id, r.home_id)
+                    (sa, ma), (sh, mh) = a.get(ta, (0.0, "")), h.get(th, (0.0, ""))
+                    pen = 0.0 if (not swapped or neutral) else 0.05
+                    lo = min(sa, sh) - pen
+                    fit = date_fit(r, g, consensus) if lo >= min_score else 0
+                    if fit:
+                        # +1 on the slate's date: ranks every such fit above any fallback
+                        lo_rank = lo + (1.0 if fit == 2 else 0.0)
+                        opts.append((lo_rank, sa + sh - pen, -dist(r, g).total_seconds(), int(r.game_id), int(ta), int(th),
+                                     swapped, (sa, ma), (sh, mh)))
+            opts.sort(reverse=True)
+            options[g] = opts
+
+        used_games: set[int] = set()
+        code_team: dict[str, int] = {}
+        pending = [g for g in parsed]
+        while pending:
+            def viable(g):
+                away, home = parsed[g]
+                return [o for o in options[g] if o[3] not in used_games
+                        and code_team.get(away.upper(), o[4]) == o[4] and code_team.get(home.upper(), o[5]) == o[5]
+                        and o[4] not in {t for c, t in code_team.items() if c != away.upper()}
+                        and o[5] not in {t for c, t in code_team.items() if c != home.upper()}]
+
+            ranked = []
+            for g in pending:
+                v = viable(g)
+                if not v:
+                    ranked.append((float("-inf"), g, v))
+                    continue
+                margin = (v[0][0] - v[1][0]) if len(v) > 1 else 1.0
+                if len(v) > 1 and abs(v[0][0] - v[1][0]) < 1e-9:
+                    margin = (v[0][1] - v[1][1]) / 2 if abs(v[0][1] - v[1][1]) > 1e-9 else (1e-6 if near is not None else 0.0)
+                ranked.append((v[0][0] + margin, g, v))
+            ranked.sort(key=lambda x: x[0], reverse=True)
+            score, g, v = ranked[0]
+            pending.remove(g)
             away, home = parsed[g]
-            return [o for o in options[g] if o[3] not in used_games
-                    and code_team.get(away.upper(), o[4]) == o[4] and code_team.get(home.upper(), o[5]) == o[5]
-                    and o[4] not in {t for c, t in code_team.items() if c != away.upper()}
-                    and o[5] not in {t for c, t in code_team.items() if c != home.upper()}]
-
-        ranked = []
-        for g in pending:
-            v = viable(g)
             if not v:
-                ranked.append((float("-inf"), g, v))
+                rep.unmatched.append({"game": g, "reason": f"no scheduled game on the slate's dates fits both codes at >= {min_score}"})
+                for code in (away, home):
+                    d = sc(code)
+                    best = max(d.items(), key=lambda kv: kv[1][0]) if d else None
+                    rep.matches.setdefault(code.upper(), TeamMatch(code.upper(), None, note=(
+                        f"best guess {tm.school.get(best[0])} {best[1][0]:.2f}" if best else "")))
                 continue
-            margin = (v[0][0] - v[1][0]) if len(v) > 1 else 1.0
-            if len(v) > 1 and abs(v[0][0] - v[1][0]) < 1e-9:
-                margin = (v[0][1] - v[1][1]) / 2 if abs(v[0][1] - v[1][1]) > 1e-9 else (1e-6 if near is not None else 0.0)
-            ranked.append((v[0][0] + margin, g, v))
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        score, g, v = ranked[0]
-        pending.remove(g)
-        away, home = parsed[g]
-        if not v:
-            rep.unmatched.append({"game": g, "reason": f"no scheduled game fits both codes at >= {min_score}"})
-            for code in (away, home):
-                d = sc(code)
-                best = max(d.items(), key=lambda kv: kv[1][0]) if d else None
-                rep.matches.setdefault(code.upper(), TeamMatch(code.upper(), None, note=(
-                    f"best guess {tm.school.get(best[0])} {best[1][0]:.2f}" if best else "")))
-            continue
-        top = v[0]
-        if len(v) > 1 and abs(v[0][0] - v[1][0]) < 1e-9 and abs(v[0][1] - v[1][1]) < 1e-9 and near is None:
-            rep.unmatched.append({"game": g, "reason": f"{len(v)} scheduled games fit equally; pass week= or a date"})
-            continue
-        _, _, _, gid, a_id, h_id, swapped, (sa, ma), (sh, mh) = top
-        used_games.add(gid)
-        rep.games[g] = gid
-        note = "site lists home/away reversed" if swapped else ""
-        for code, tid, sco, meth in ((away, a_id, sa, ma), (home, h_id, sh, mh)):
-            code_team[code.upper()] = tid
-            rep.matches[code.upper()] = TeamMatch(code.upper(), tid, tm.school.get(tid), meth, round(min(sco, 1.0), 4),
-                                                  gid, note)
+            top = v[0]
+            if len(v) > 1 and abs(v[0][0] - v[1][0]) < 1e-9 and abs(v[0][1] - v[1][1]) < 1e-9 and near is None:
+                rep.unmatched.append({"game": g, "reason": f"{len(v)} scheduled games fit equally; pass week= or a date"})
+                continue
+            _, _, _, gid, a_id, h_id, swapped, (sa, ma), (sh, mh) = top
+            used_games.add(gid)
+            rep.games[g] = gid
+            note = "site lists home/away reversed" if swapped else ""
+            for code, tid, sco, meth in ((away, a_id, sa, ma), (home, h_id, sh, mh)):
+                code_team[code.upper()] = tid
+                rep.matches[code.upper()] = TeamMatch(code.upper(), tid, tm.school.get(tid), meth, round(min(sco, 1.0), 4),
+                                                      gid, note)
+        return rep
+
+    rep = assign(None)
+    untimed = [g for g in rep.games if g not in kicks]
+    if week is None and untimed and len(rep.games) >= 2:
+        wk_of = s.set_index("game_id")["week"]
+        weeks = pd.Series([wk_of.get(gid) for gid in rep.games.values()]).dropna().astype(int)
+        counts = weeks.value_counts()
+        tops = sorted(counts[counts == counts.max()].index)
+        if len(tops) == 1 and (weeks != tops[0]).any():  # a clear consensus that some games disagree with
+            rep = assign(int(tops[0]))
     return rep

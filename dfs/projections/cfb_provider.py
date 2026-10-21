@@ -102,7 +102,7 @@ class CFBProvider:
         games = contest.games or sorted({p.game for p in contest.players.values() if p.game})
         rep = match_slate(games, data.teams, data.schedules, season=season, week=self.week,
                           near=pd.Timestamp(when).tz_convert("UTC") if pd.Timestamp(when).tzinfo else pd.Timestamp(when, tz="UTC"),
-                          overrides=self.team_overrides)
+                          overrides=self.team_overrides, game_times=self._game_times(contest))
         self.team_report = rep
         week = self.week
         if week is None:
@@ -112,7 +112,7 @@ class CFBProvider:
             week = int(wk.mode().iloc[0])
             if wk.nunique() > 1:
                 notes.append(f"slate games fall in weeks {sorted(wk.unique().tolist())}; projecting week {week}")
-        notes.append(f"season {season} week {week}; {rep.summary().splitlines()[0]}")
+        notes.append(f"season {season} {cfbdata.week_label(week)}; {rep.summary().splitlines()[0]}")
         for u in rep.unmatched:
             notes.append(f"TEAM/GAME UNMATCHED: {u}")
         for c, mt in rep.matches.items():
@@ -130,7 +130,7 @@ class CFBProvider:
         team_ids = {mt.team_id for mt in rep.matches.values() if mt.team_id is not None}
         proj, removed = model.project_week(data, season, week, table, self.params, team_ids=team_ids,
                                            dispersion=self.dispersion, pzero=self.pzero)
-        idx = self._indexes(data, season, team_ids)
+        idx = self._indexes(data, season, team_ids, week)
         base: dict[str, Projection] = {}
         ruled_out: set[str] = set()
         by_ath = proj.set_index(["athlete_id", "team_id"], drop=False) if len(proj) else None
@@ -160,12 +160,12 @@ class CFBProvider:
                 matched_rows[k] = row
                 base[k] = self._projection(k, p, row)
             elif tid not in teams_with_games:
-                self._unmatched(p, f"{p.team} has no {season} game before week {week}; stats baseline needs one", base,
+                self._unmatched(p, f"{p.team} has no {season} game before {cfbdata.week_label(week)}; stats baseline needs one", base,
                                 contest, kind="no_team_history")
             else:
                 last = rem.loc[(aid, tid)] if rem is not None and (aid, tid) in rem.index else None
                 last = last.iloc[0] if isinstance(last, pd.DataFrame) else last
-                why = (f"last recorded play week {int(last['last_week'])}" if last is not None
+                why = (f"last recorded play {cfbdata.week_label(int(last['last_week']))}" if last is not None
                        else f"no recorded offensive play in {season}")
                 no_role[p.game or "?"].append(f"{p.name} ({'/'.join(p.positions)}): {why}")
         n_noroles = sum(len(v) for v in no_role.values())
@@ -181,9 +181,20 @@ class CFBProvider:
         market, known, usage, facts = self._texts(contest, data, rep, season, week, matched_rows, no_role, ruled_out)
         return SlateContext(baseline=base, market=market, known=known, usage=usage, structured_facts=facts,
                             ruled_out=ruled_out, notes=notes,
-                            data_source=f"sportsdataverse cfbfastR pbp + ESPN box/rosters/betting, {season} wk {week} (games before it)")
+                            data_source=f"sportsdataverse cfbfastR pbp + ESPN box/rosters/betting, {season} {cfbdata.week_label(week)} (games before it)")
 
     # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _game_times(contest: Contest) -> dict[str, pd.Timestamp]:
+        """Slate game -> earliest kickoff listed for its players (DK files carry it; FD lists do not)."""
+        out: dict[str, pd.Timestamp] = {}
+        for p in contest.players.values():
+            if p.game and p.start_time:
+                t = pd.Timestamp(p.start_time)
+                t = t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+                out[p.game] = min(out.get(p.game, t), t)
+        return out
 
     @staticmethod
     def _slate_time(contest: Contest, now: datetime | None) -> datetime:
@@ -211,12 +222,16 @@ class CFBProvider:
         data.cache.clear()
 
     @staticmethod
-    def _indexes(data: model.CFBData, season: int, team_ids: set[int]) -> dict[int, cs.TeamIndex]:
+    def _indexes(data: model.CFBData, season: int, team_ids: set[int], week: int | None = None) -> dict[int, cs.TeamIndex]:
+        """Name index per team: the season's roster plus players with a stat line before ``week``
+        (point in time: a replayed slate sees only what a live run would have seen)."""
         out: dict[int, cs.TeamIndex] = {}
         r = data.rosters
         if len(r):
             r = r[(r["season"] == season) & r["team_id"].isin(team_ids)]
         L = data.lines[(data.lines["season"] == season) & data.lines["team_id"].isin(team_ids)]
+        if week is not None:
+            L = cfbdata.before(L, season, week)
         has_stats = set(zip(L["team_id"], L["athlete_id"]))
         for tid in team_ids:
             ti = cs.TeamIndex()

@@ -186,6 +186,39 @@ def test_text_parsers():
     assert cs.parse_two_point("TOUCHDOWN #9 A.B pass attempt Successful PENALTY X. NO PLAY #9 A.B pass attempt failed") == []
 
 
+def test_two_point_parsing_variants():
+    """Regression: the 2025 feed writes "Run For Two-point Conversion" (case differs) and some
+    TD-typed rows have ``touchdown == 0``; both conversions were dropped."""
+    assert cs.parse_two_point("Kewan Lacy run for 2 yds for a TD (T. Chambliss Run For Two-point Conversion)") == \
+        [(None, "T. Chambliss")]
+    assert cs.parse_two_point("A pass to B for 9 yds for a TD (C Pass To D For Two-point Conversion)") == [(None, "C"), (None, "D")]
+    rows = [_play(1, "Rushing Touchdown", "#5 J.Doe rush middle for 2 yards gain to the AWY00 TOUCHDOWN, clock 03:00 "
+                  "#16 J.Overton, Jr. rush attempt Successful", 2, rush_td=1, touchdown=0, rush_player_id=102.0,
+                  rush_player="Jay Doe", rush_yds=2.0)]
+    df = pd.DataFrame(rows)
+    for c in cfbdata.PBP_COLUMNS:
+        if c not in df.columns:
+            df[c] = np.nan
+    lines, _, _ = cs.player_game_lines(df, ROSTER)
+    L = lines.set_index("athlete_id")
+    assert L.loc[102, "rush_td"] == 1 and L.loc[105, "two_pt"] == 1
+
+
+def test_box_lines_drop_team_rows():
+    """Regression: ESPN's team pseudo-player is " Team" (leading space, negative id); it was kept and
+    entered the validation and the box-repaired lines (bad snaps, team kneels, team fumbles)."""
+    pb = pd.DataFrame([
+        {"category": "rushing", "athlete_id": -7768, "athlete_name": " Team", "team_id": 30, "game_id": 1, "season": 2026,
+         "rushingAttempts": 2, "rushingYards": -12, "rushingTouchdowns": 0},
+        {"category": "fumbles", "athlete_id": -7768, "athlete_name": " Team", "team_id": 30, "game_id": 1, "season": 2026,
+         "fumblesLost": 1},
+        {"category": "rushing", "athlete_id": 4433, "athlete_name": "Real Back", "team_id": 30, "game_id": 1, "season": 2026,
+         "rushingAttempts": 12, "rushingYards": 71, "rushingTouchdowns": 1},
+    ])
+    b = cs.box_lines(pb)
+    assert b["athlete_id"].tolist() == [4433] and b["rush_yds"].tolist() == [71.0]
+
+
 def test_team_index_resolution():
     ti = cs.TeamIndex()
     ti.add(1, "Jeremiah Smith", "4", "WR", "Jeremiah", "Smith")
@@ -274,7 +307,11 @@ def test_workload_adjustment_and_removal():
     # WR3 had no play in the last two games -> removed; WR4 missed only the latest game -> kept with a high p_zero
     assert 5 not in P.index and 5 in set(removed["athlete_id"])
     assert not P.loc[6, "appeared_last"] and P.loc[6, "p_zero"] > P.loc[3, "p_zero"]
-    assert P.loc[6, "workload"] < 1.0
+    # recent_mode "played": his share in the game he did play equals his season share, so workload is
+    # 1 and the absence is p_zero's job (this used to assert < 1, which held only by float rounding)
+    assert P.loc[6, "workload"] == pytest.approx(1.0)
+    team, _ = model.project_week(d, 2026, 5, "draftkings.cfb", p.with_(recent_mode="team"))
+    assert team.set_index("athlete_id").loc[6, "workload"] < 0.99  # "team": the missed game counts as zero share
 
 
 def test_shrinkage_and_environment():
@@ -309,6 +346,41 @@ def test_point_in_time_no_leakage():
     a = proj.set_index("athlete_id")["mean"].sort_index()
     b = proj2.set_index("athlete_id")["mean"].sort_index()
     pd.testing.assert_series_equal(a, b)
+
+
+def test_postseason_weeks_sort_after_regular_season():
+    """Regression: the release files number bowl / playoff games week 1 (``season_type`` =
+    postseason), so December-January games were read as week-1 history of the same season and fed
+    every regular-season week's features (2025 fit: ~8% of the history rows)."""
+    raw = pd.DataFrame({"season": [2025, 2025, 2025, 2025], "week": [1, 14, 1, 2],
+                        "season_type": ["regular", "regular", "postseason", "postseason"], "game_id": [1, 2, 3, 4]})
+    df = cfbdata._normalize(raw.copy(), 2025)
+    assert df.loc[df["game_id"] == 3, "week"].item() == cfbdata.POSTSEASON_WEEK_OFFSET + 1
+    assert df.loc[df["season_type"] == "postseason", "week"].min() > df.loc[df["season_type"] == "regular", "week"].max()
+    assert set(cfbdata.before(df, 2025, 5)["game_id"]) == {1}
+    assert set(cfbdata.before(df, 2025, 15)["game_id"]) == {1, 2}
+    assert set(cfbdata.before(df, 2026, 1)["game_id"]) == {1, 2, 3, 4}
+    assert cfbdata.week_label(cfbdata.POSTSEASON_WEEK_OFFSET + 1) == "postseason week 1" and cfbdata.week_label(7) == "week 7"
+
+
+def test_point_in_time_usage_positions():
+    """Regression: positions of players without a roster entry were inferred from their whole season,
+    so later games could relabel a player (RB -> QB) in earlier weeks' projections."""
+    d = synthetic_data()
+    lines = d.lines.drop(columns=["pos"])
+    gadget = []
+    for w in range(1, 7):  # weeks 1-4: a runner; weeks 5-6 (target week and after): he throws a lot
+        st = {k: 0.0 for k in cs.COUNT_STATS}
+        st.update(carries=8, rush_att=8, rush_yds=40, carry_yds=40) if w <= 4 else st.update(pass_att=40, pass_cmp=25, pass_yds=300)
+        for c in ("pass_att", "sacks", "carries", "targets"):
+            st[f"c_{c}"] = st[c]
+        gadget.append({"season": 2026, "week": w, "game_id": 1000 + w, "team_id": 10, "athlete_id": 9, "name": "Gadget Guy",
+                       "stat_source": "pbp", "usage_ok": True, **st})
+    d2 = model.CFBData.build([2026], pd.concat([lines, pd.DataFrame(gadget)], ignore_index=True), d.team_totals, d.schedules,
+                             d.game_lines, d.rosters, d.teams)
+    assert d2.lines.loc[d2.lines["athlete_id"] == 9, "pos"].iloc[0] == "QB"  # whole-season label (uses weeks 5-6)
+    proj, _ = model.project_week(d2, 2026, 5, "draftkings.cfb")
+    assert proj.set_index("athlete_id").loc[9, "pos"] == "RB"  # only weeks 1-4 are visible at week 5
 
 
 def test_vectorised_tuning_mean_matches_project():
@@ -414,6 +486,50 @@ def test_match_slate_infers_week_and_reports_unknown():
     assert pinned.team_id("SOONERS") == 1
 
 
+def test_match_slate_prefers_games_on_the_slate_dates():
+    """Regression (seen on real 2026 schedules): with the week inferred, the slate date was only the
+    last tie-break, so 'VIRG@SMU' on a week-10 slate (Virginia Tech at SMU) matched Virginia at SMU
+    from week 7, because 'VIRG' reads more like Virginia."""
+    teams = pd.DataFrame([(21, "UVA", "Virginia", "Cavaliers"), (22, "VT", "Virginia Tech", "Hokies"), (23, "SMU", "SMU", "Mustangs"),
+                          (24, "DUKE", "Duke", "Blue Devils"), (25, "UNC", "North Carolina", "Tar Heels"),
+                          (26, "BC", "Boston College", "Eagles"), (27, "CLEM", "Clemson", "Tigers")],
+                         columns=["team_id", "abbreviation", "school", "mascot"])
+    teams["location"] = teams["school"]
+    teams["short_display_name"] = teams["school"]
+    teams["nickname"] = teams["school"]
+    teams["display_name"] = teams["school"] + " " + teams["mascot"]
+    for c in ("alt_name1", "alt_name2", "alt_name3"):
+        teams[c] = None
+    teams["is_fbs"] = True
+    sched = pd.DataFrame([(701, 2026, 7, "2026-10-17T19:30:00Z", 23, 21, "SMU", "Virginia", False),
+                          (702, 2026, 10, "2026-11-07T20:00:00Z", 23, 22, "SMU", "Virginia Tech", False),
+                          (703, 2026, 10, "2026-11-07T17:00:00Z", 25, 24, "North Carolina", "Duke", False),
+                          (704, 2026, 10, "2026-11-07T23:30:00Z", 27, 26, "Clemson", "Boston College", False)],
+                         columns=["game_id", "season", "week", "start_date", "home_id", "away_id", "home_team", "away_team",
+                                  "neutral_site"])
+    slate = ["VIRG@SMU", "DUKE@UNC", "BC@CLEM"]
+    before_fix = match_slate(slate[:1], teams, sched, season=2026, week=None)
+    assert before_fix.games["VIRG@SMU"] == 701  # alone and undated, the name decides (Virginia)
+    # FD-style (no kickoff times): the slate's consensus week decides
+    rep = match_slate(slate, teams, sched, season=2026, week=None)
+    assert rep.games["VIRG@SMU"] == 702 and rep.team_id("VIRG") == 22
+    # DK-style: the game's own kickoff decides, even alone
+    kick = {"VIRG@SMU": pd.Timestamp("2026-11-07T15:00:00-05:00")}
+    rep = match_slate(slate[:1], teams, sched, season=2026, week=None, game_times=kick)
+    assert rep.games["VIRG@SMU"] == 702 and rep.team_id("VIRG") == 22
+    # the right game is missing from that week: reported unmatched, not matched to week 7's game
+    gone = match_slate(slate, teams, sched[sched["game_id"] != 702], season=2026, week=None)
+    assert "VIRG@SMU" not in gone.games and any(u["game"] == "VIRG@SMU" for u in gone.unmatched)
+    assert gone.games["DUKE@UNC"] == 703
+    # a listed kickoff a few days off the schedule (postponed game) still matches; two months off does not
+    moved = match_slate(["OKST@ARK"], TEAMS, SCHED, season=2026, week=None,
+                        game_times={"OKST@ARK": pd.Timestamp("2026-10-27T19:00:00Z")})
+    assert moved.games["OKST@ARK"] == 506
+    far = match_slate(["OKST@ARK"], TEAMS, SCHED, season=2026, week=None,
+                      game_times={"OKST@ARK": pd.Timestamp("2026-09-01", tz="UTC")})
+    assert "OKST@ARK" not in far.games and far.unmatched
+
+
 # --------------------------------------------------------------------------- provider (offline)
 
 
@@ -484,6 +600,44 @@ def test_provider_user_lines_drive_environment():
     assert lined.baseline[p.key].components["env"] > 1.0 == base.baseline[p.key].components["env"]
     assert lined.baseline[p.key].mean > base.baseline[p.key].mean
     assert d.team_games["implied"].isna().all()  # the injected data object was not modified
+
+
+def test_provider_bowl_slate_uses_the_whole_regular_season():
+    """Regression: a bowl game (file week 1, postseason) was matched as week 1, so the provider saw no
+    current-season history and every player fell back to site averages."""
+    from dfs.projections.cfb_provider import CFBProvider
+
+    d = synthetic_data()
+    bowl = pd.DataFrame([{"game_id": 1099, "season": 2026, "week": 1, "season_type": "postseason",
+                          "start_date": "2026-12-20T19:00:00Z", "home_id": 10, "away_id": 20, "home_team": "Home U",
+                          "away_team": "Away St", "home_abbreviation": "HOM", "away_abbreviation": "AWY", "neutral_site": True,
+                          "conference_game": False, "completed": False, "fbs_game": True, "venue": "Bowl Stadium"}])
+    sched = cfbdata._normalize(pd.concat([d.schedules.assign(season_type="regular"), bowl], ignore_index=True), 2026)
+    d2 = model.CFBData.build([2026], d.lines.drop(columns=["pos"]), d.team_totals, sched, d.game_lines, d.rosters, d.teams)
+    p = Player(key="HOM|rb one|RB", name="Rb One", team="HOM", opponent="AWY", positions=["RB"], game="AWY@HOM",
+               start_time=pd.Timestamp("2026-12-20T14:00:00-05:00").to_pydatetime(), site_avg=5.0)
+    prov = CFBProvider(season=2026, data=d2)
+    ctx = prov.prepare(_cfb_contest([p]))
+    assert prov.team_report.games["AWY@HOM"] == 1099
+    assert ctx.baseline[p.key].source == "baseline" and ctx.baseline[p.key].components["games"] == 4
+    assert any("postseason week 1" in n for n in ctx.notes)
+
+
+def test_provider_name_matching_ignores_target_week_lines():
+    """Regression: the provider's name index read every line of the season, so a player first seen in
+    the target week (or later) was matched from data a live run would not have."""
+    from dfs.projections.cfb_provider import CFBProvider
+
+    d = synthetic_data()
+    late = d.lines[(d.lines["week"] == 4) & (d.lines["athlete_id"] == 3)].copy()
+    late["week"], late["game_id"], late["athlete_id"], late["name"] = 5, 1005, 77, "Late Comer"
+    d2 = model.CFBData.build([2026], pd.concat([d.lines, late]).drop(columns=["pos"]), d.team_totals, d.schedules,
+                             d.game_lines, d.rosters, d.teams)
+    p = Player(key="HOM|late comer|WR", name="Late Comer", team="HOM", opponent="AWY", positions=["WR"], game="AWY@HOM",
+               start_time=pd.Timestamp("2026-10-10T19:00:00Z").to_pydatetime(), site_avg=6.0)
+    prov = CFBProvider(season=2026, data=d2)
+    ctx = prov.prepare(_cfb_contest([p]))
+    assert p.key not in prov.player_matches and ctx.baseline[p.key].source == "site_avg"
 
 
 def test_pipeline_uses_cfb_provider():

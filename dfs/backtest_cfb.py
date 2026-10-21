@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
+from dfs.data import cfb as cfbdata
 from dfs.distributions import quantiles_from_mean_sd, sample_from_uniform
 from dfs.projections import cfb as m
 
@@ -411,7 +412,9 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
              f"- Fit: parameters {'grid-searched' if a.fit else 'defaults (from an earlier --fit run)'} and dispersion / p_zero tables fit on "
              f"{a.fit_season} weeks {a.fit_weeks} with {a.fit_season - 1} as the prior season.",
              f"- Test: {a.test_season} weeks {a.test_weeks}, prior season {a.test_season - 1}; out of sample. Each week is projected "
-             "from games strictly before it (`dfs.data.cfb.before`).",
+             "from games strictly before it (`dfs.data.cfb.before`). The release files number bowl and playoff games from week 1 "
+             f"again; they are moved to weeks {cfbdata.POSTSEASON_WEEK_OFFSET + 1}+ on load, so a season's postseason never "
+             "counts as history for its own regular season.",
              "- Games: FBS-vs-FBS only (what DK/FD college slates contain). Lines: ESPN pre-game spread/total from the betting file "
              "(closing-type lines; a live Wednesday line is noisier).",
              "- Actuals: target-week stat lines from play-by-play (official box used where the pbp is incomplete) scored with "
@@ -449,7 +452,8 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
               f"({miss_n / max(n_role + miss_n, 1):.1%}).", ""]
     if v:
         lines += ["## Stat-line validation", "",
-                  "Play-by-play stat lines vs ESPN's official player box (same games), per season, after repair:", "",
+                  "Play-by-play stat lines vs ESPN's official player box (same games), per season, after repair; ESPN's "
+                  "team pseudo-player (\" Team\": bad snaps, team kneel-downs, team fumbles) is not a player and is excluded:", "",
                   "| season | flagged team-games | player-games | FP MAE | FP within 1 pt | pass yds diff | rush yds diff | rec yds diff | TD diff (pass/rush/rec) |",
                   "|---|---|---|---|---|---|---|---|---|"]
         for s, val in sorted(v.items()):
@@ -490,8 +494,12 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
               "have no line in these files, so the environment factor is off unless lines are passed to `CFBProvider(lines=...)`; "
               "backtest accuracy with lines is therefore a little better than a Wednesday projection would see.",
               "- Sacks are scored as rushing yards (NCAA official convention, `SACKS_IN_RUSHING`); not confirmed against a "
-              "DK/FD CFB box score. Special-teams fumbles and kneel-downs logged under a team name are not attributed (see "
-              f"validation: fumbles lost vs the box {fum_txt}; a few tenths of a point per affected player-game).",
+              "DK/FD CFB box score.",
+              f"- Fumbles lost run under the official box ({fum_txt}). Two causes: fumbles on kick and punt returns are not "
+              "scrimmage plays and are not attributed, and the feed mislabels some recoveries (rows typed \"Fumble Recovery "
+              "(Own)\" whose text has the defense recovering, and the reverse). The next play's possession was tried as a "
+              "correction and is too noisy (turnovers on downs, missing possession changes). Cost: 1 point (DK) / 2 (FD) on "
+              "about 1% of player-games.",
               "- Play-by-play gaps: 2024 incompletion texts often omit the target (target shares from 2024 are partial); "
               "team-games whose pbp is visibly incomplete are scored from the official box and excluded from usage shares.",
               "- The season aggregate files are themselves derived from cfbfastR pbp, so agreeing with them checks parsing "
@@ -501,7 +509,7 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
               "- Coverage of the projection set: players with no recorded play in their team's last two games (returning "
               "from injury, debutants) are not projected; first-time starters are invisible to a stats-only baseline.",
               "- Positions come from ESPN rosters (TE kept separate from WR even though DK lists TEs as WR); players without a "
-              "roster entry get a usage-inferred position computed over their whole season.", ""]
+              "roster entry get a position inferred from their usage in games before the target week.", ""]
     path.write_text("\n".join(lines))
     return path
 

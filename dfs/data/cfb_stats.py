@@ -222,8 +222,9 @@ PATTERNS: dict[str, list[str]] = {
 }
 _COMPILED = {k: [re.compile(p) for p in v] for k, v in PATTERNS.items()}
 _TWO_J = re.compile(r"#(?P<j>\d+)\s+(?P<n>[^#()]+?)\s+(?P<kind>rush|pass) attempt (?P<res>successful|failed|good|no good)", re.I)
-_TWO_RUN = re.compile(r"\((?P<n>[A-Z][^()]*?)\s+(?:Run|run|Rush|rush) for Two-Point Conversion\)")
-_TWO_PASS = re.compile(r"\((?P<n>[A-Z][^()]*?)\s+[Pp]ass to\s+(?P<r>[A-Z][^()]*?)\s+for Two-Point Conversion\)")
+# "(B Run for Two-Point Conversion)" (2026 feed) / "(T. Chambliss Run For Two-point Conversion)" (2025 feed)
+_TWO_RUN = re.compile(r"\((?P<n>[A-Z][^()]*?)\s+(?:run|rush) for two-point conversion\)", re.I)
+_TWO_PASS = re.compile(r"\((?P<n>[A-Z][^()]*?)\s+pass to\s+(?P<r>[A-Z][^()]*?)\s+for two-point conversion\)", re.I)
 _TWO_LINE = re.compile(r"#(?P<j>\d+)\s+(?P<n>[^#()]+?)\s+rush attempt successful \(two-point conversion\)", re.I)
 
 
@@ -604,7 +605,10 @@ def player_game_lines(pbp: pd.DataFrame, rosters: pd.DataFrame | None = None,
 
     # two-point conversions (scoring team = offense on offensive TDs, else the defense)
     two_rows = []
-    tp_mask = (pd.to_numeric(pbp.get("touchdown"), errors="coerce").fillna(0) > 0) | \
+    # scoring plays: ``touchdown`` is 0 on some TD-typed rows (2026: 396), so the type and the
+    # rush/pass TD flags count too
+    tp_mask = (pd.to_numeric(pbp.get("touchdown"), errors="coerce").fillna(0) > 0) | _flag(pbp, "rush_td") | \
+        _flag(pbp, "pass_td") | pbp["play_type"].fillna("").str.contains("Touchdown", regex=False) | \
         pbp["play_type"].isin(["Two Point Pass", "Two Point Rush"])
     tp = pbp.loc[tp_mask & pbp["play_text"].fillna("").str.contains(r"(?i)two-point|attempt succe", regex=True)]
     if len(tp):
@@ -686,7 +690,11 @@ def box_lines(player_box: pd.DataFrame) -> pd.DataFrame:
     """ESPN player box (one row per athlete per category) -> one row per player-game, same stat keys."""
     if player_box is None or player_box.empty:
         return pd.DataFrame()
-    b = player_box[player_box["athlete_name"].fillna("") != "Team"].copy()
+    # ESPN's team pseudo-player is " Team" (leading space) with a negative athlete id: bad snaps,
+    # team kneel-downs and team fumbles. It is not a player, so it is dropped.
+    nm = player_box["athlete_name"].fillna("").astype(str).str.strip().str.lower()
+    aid = pd.to_numeric(player_box["athlete_id"], errors="coerce")
+    b = player_box[(nm != "team") & (aid > 0)].copy()
     keys = ["season", "game_id", "team_id", "athlete_id"]
     parts = []
     ps = b[b["category"] == "passing"]

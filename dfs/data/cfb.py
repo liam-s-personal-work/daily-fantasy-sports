@@ -11,6 +11,11 @@ warning is recorded in ``LOAD_WARNINGS``; with no cached copy the error propagat
 Point-in-time rule: projection code reads history only through ``before()`` (rows strictly
 earlier than (season, week)) and ``week_games()`` (target-week schedule without scores), so
 target-week outcomes never leak into features.
+
+Postseason weeks: the release files number bowl and playoff games from week 1 again
+(``season_type == "postseason"``). ``_normalize`` moves them to ``POSTSEASON_WEEK_OFFSET + week``
+(bowls = week 21) so they sort after the regular season; otherwise December/January games read
+as week-1 history of the same season.
 """
 
 from __future__ import annotations
@@ -65,6 +70,8 @@ PBP_COLUMNS = [
 ]
 
 LOAD_WARNINGS: list[str] = []
+# postseason week w -> POSTSEASON_WEEK_OFFSET + w (the regular season runs weeks 0-16)
+POSTSEASON_WEEK_OFFSET = 20
 
 
 class DataUnavailable(RuntimeError):
@@ -186,6 +193,10 @@ def _normalize(df: pd.DataFrame, season: int) -> pd.DataFrame:
         if col in df.columns and not pd.api.types.is_integer_dtype(df[col]):
             v = pd.to_numeric(df[col], errors="coerce")
             df[col] = v.astype("int64") if v.notna().all() else v.astype("Int64")
+    if "week" in df.columns and "season_type" in df.columns:
+        post = df["season_type"].astype(str).str.strip().str.lower().eq("postseason").to_numpy()
+        if post.any():
+            df.loc[post, "week"] = df.loc[post, "week"] + POSTSEASON_WEEK_OFFSET
     for col in ("game_id", "team_id", "athlete_id", "home_id", "away_id"):
         if col in df.columns and not pd.api.types.is_integer_dtype(df[col]):
             v = pd.to_numeric(df[col], errors="coerce")
@@ -198,8 +209,14 @@ def _normalize(df: pd.DataFrame, season: int) -> pd.DataFrame:
 
 
 def week_key(season, week) -> np.ndarray | int:
-    """Sortable (season, week) index (postseason weeks are mapped above the regular season by callers)."""
+    """Sortable (season, week) index (postseason weeks are already above the regular season, see ``_normalize``)."""
     return np.asarray(season, dtype=np.int64) * 100 + np.asarray(week, dtype=np.int64)
+
+
+def week_label(week: int) -> str:
+    """'week 7', or 'postseason week 1' for a remapped postseason week."""
+    w = int(week)
+    return f"postseason week {w - POSTSEASON_WEEK_OFFSET}" if w > POSTSEASON_WEEK_OFFSET else f"week {w}"
 
 
 def before(df: pd.DataFrame, season: int, week: int, season_col: str = "season", week_col: str = "week",

@@ -47,7 +47,7 @@ POSITIONS = ("QB", "RB", "WR", "TE")
 # losses) and DK/FD score from official stats; set False to score rushing without sack yards.
 SACKS_IN_RUSHING = True
 ROSTER_POS = {"QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB", "WR": "WR", "SB": "WR", "TE": "TE"}
-DERIVED_VERSION = "cfb-lines-v4"
+DERIVED_VERSION = "cfb-lines-v5"  # v5: postseason weeks remapped, ESPN team rows out of the box, two-point fixes
 
 
 # --------------------------------------------------------------------------- parameters
@@ -58,9 +58,9 @@ class CFBParams:
     """Defaults fit on 2025 weeks 3-13 (prior season 2024) by ``python -m dfs.backtest_cfb --fit``."""
 
     recent_games: int = 2
-    k_recent: float = 80.0  # pseudo team-opportunities pulling the recent share to the season share
+    k_recent: float = 40.0  # pseudo team-opportunities pulling the recent share to the season share
     alpha: float = 0.5  # elasticity of points to the workload ratio when the recent share is up
-    alpha_down: float = 0.25  # ... and when it is down (down-moves are noisier: blowouts, one-off game plans)
+    alpha_down: float = 0.1  # ... and when it is down (down-moves are noisier: blowouts, one-off game plans)
     ratio_lo: float = 0.3
     ratio_hi: float = 2.5
     k0: float = 2.0  # pseudo games of the role prior
@@ -76,7 +76,7 @@ class CFBParams:
     # "competitive": shares from non-garbage-time snaps only (CFB blowouts distort shares); "all": every snap
     usage_basis: str = "competitive"
     # per-position multiplier on the played mean (sum actual / sum projected on the fit season's dfs pool)
-    scale: Mapping[str, float] = field(default_factory=lambda: {"QB": 1.0421, "RB": 1.0149, "WR": 0.975, "TE": 0.9496})
+    scale: Mapping[str, float] = field(default_factory=lambda: {"QB": 1.0475, "RB": 1.0104, "WR": 0.9748, "TE": 0.9524})
 
     def with_(self, **kw) -> "CFBParams":
         return replace(self, **kw)
@@ -84,20 +84,20 @@ class CFBParams:
 
 # Played-outcome SD = a + b * mean_played, and the two-piece skew, by position (fit on 2025 residuals).
 DEFAULT_DISPERSION: dict[str, dict[str, float]] = {
-    "QB": {"a": 6.217, "b": 0.216, "skew": 0.3},
-    "RB": {"a": 3.457, "b": 0.43, "skew": 0.6},
-    "WR": {"a": 2.523, "b": 0.534, "skew": 0.45},
-    "TE": {"a": 1.921, "b": 0.548, "skew": 0.6},
+    "QB": {"a": 6.212, "b": 0.219, "skew": 0.3},
+    "RB": {"a": 3.626, "b": 0.424, "skew": 0.6},
+    "WR": {"a": 2.623, "b": 0.527, "skew": 0.6},
+    "TE": {"a": 1.884, "b": 0.557, "skew": 0.6},
 }
 # P(no recorded stat in the game): logistic by position on PZ_FEATURES, where x = log1p(expected
 # opportunities this game), missed = no recorded play in the team's latest game, and depth ranks the
 # player within his team's QB / RB / WR+TE group by recent usage share (all pre-game). Fit on 2025.
 PZ_FEATURES = ("intercept", "missed_last", "x", "depth1", "depth2", "x^2", "missed_last*x")
 DEFAULT_PZERO: dict[str, dict[str, list[float]]] = {
-    "QB": {"coef": [0.7823, 0.5656, -0.2282, -1.52, -0.5534, -0.0802, 0.4527]},
-    "RB": {"coef": [1.3253, 0.1533, -1.6751, 0.1198, -0.1691, 0.0216, 1.0987]},
-    "WR": {"coef": [1.6097, 0.2341, -2.7083, -0.7125, -0.4775, 0.2725, 0.9722]},
-    "TE": {"coef": [1.3827, 0.1291, -1.8738, -0.1438, -0.0192, -0.2723, 0.6393]},
+    "QB": {"coef": [0.7885, 0.5093, -0.2806, -1.4043, -0.5787, -0.0788, 0.5457]},
+    "RB": {"coef": [1.1585, 0.2542, -1.6847, 0.1219, -0.167, 0.0506, 1.0779]},
+    "WR": {"coef": [1.363, 0.2843, -2.4945, -0.6802, -0.5097, 0.2324, 0.9409]},
+    "TE": {"coef": [1.2204, 0.179, -1.8294, 0.0869, -0.1136, -0.2082, 0.601]},
 }
 
 
@@ -166,9 +166,11 @@ class CFBData:
         if "usage_ok" not in team_totals.columns:
             team_totals["usage_ok"] = True
         tg = team_games_frame(schedules, game_lines)
+        lines = lines.drop(columns=[c for c in ("pos", "pos_src") if c in lines.columns])
         pos = positions_frame(lines, rosters)
         lines = lines.merge(pos, on=["season", "athlete_id"], how="left")
         lines["pos"] = lines["pos"].fillna("WR")
+        lines["pos_src"] = lines["pos_src"].fillna("usage")
         return cls(seasons=list(seasons), lines=lines, team_totals=team_totals, team_games=tg, game_lines=game_lines,
                    positions=pos, rosters=rosters, teams=teams, schedules=schedules, validation=validation or {})
 
@@ -245,12 +247,17 @@ def team_games_frame(schedules: pd.DataFrame, game_lines: pd.DataFrame | None) -
     return pd.concat([home, away], ignore_index=True).sort_values(["season", "week", "game_id", "is_home"]).reset_index(drop=True)
 
 
+def _infer_pos(use: pd.DataFrame) -> np.ndarray:
+    """QB / RB / WR from summed pass attempts, carries and targets."""
+    return np.where(use["pass_att"] >= np.maximum(5, use["carries"]), "QB",
+                    np.where(use["carries"] > use["targets"], "RB", "WR"))
+
+
 def positions_frame(lines: pd.DataFrame, rosters: pd.DataFrame | None) -> pd.DataFrame:
-    """(season, athlete_id) -> QB/RB/WR/TE: roster position, else inferred from usage."""
+    """(season, athlete_id) -> pos (QB/RB/WR/TE) and pos_src: roster position ("roster"), else
+    inferred from the season's usage ("usage"; recomputed point in time by ``point_in_time_pos``)."""
     use = lines.groupby(["season", "athlete_id"])[["pass_att", "carries", "targets"]].sum()
-    inferred = np.where(use["pass_att"] >= np.maximum(5, use["carries"]), "QB",
-                        np.where(use["carries"] > use["targets"], "RB", "WR"))
-    out = pd.DataFrame({"pos_used": inferred}, index=use.index).reset_index()
+    out = pd.DataFrame({"pos_used": _infer_pos(use)}, index=use.index).reset_index()
     if rosters is not None and len(rosters):
         r = rosters[["season", "athlete_id", "position_abbreviation"]].dropna(subset=["athlete_id"]).copy()
         r["athlete_id"] = r["athlete_id"].astype("int64")
@@ -260,10 +267,26 @@ def positions_frame(lines: pd.DataFrame, rosters: pd.DataFrame | None) -> pd.Dat
         # roster positions are a season snapshot; fall back to any season's roster entry
         anyr = r.dropna(subset=["pos_roster"]).sort_values("season").drop_duplicates("athlete_id", keep="last")
         out = out.merge(anyr[["athlete_id", "pos_roster"]].rename(columns={"pos_roster": "pos_any"}), on="athlete_id", how="left")
-        out["pos"] = out["pos_roster"].fillna(out["pos_any"]).fillna(out["pos_used"])
+        known = out["pos_roster"].fillna(out["pos_any"])
+        out["pos"] = known.fillna(out["pos_used"])
+        out["pos_src"] = np.where(known.notna(), "roster", "usage")
     else:
         out["pos"] = out["pos_used"]
-    return out[["season", "athlete_id", "pos"]]
+        out["pos_src"] = "usage"
+    return out[["season", "athlete_id", "pos", "pos_src"]]
+
+
+def point_in_time_pos(hist: pd.DataFrame) -> pd.Series:
+    """Positions for history rows: roster positions as they are; usage-inferred ones recomputed from
+    ``hist`` itself (rows before the target week), so later games never relabel a player."""
+    if "pos_src" not in hist.columns or not (hist["pos_src"] == "usage").any():
+        return hist["pos"]
+    u = hist[hist["pos_src"] == "usage"]
+    use = u.groupby(["season", "athlete_id"])[["pass_att", "carries", "targets"]].sum()
+    inferred = pd.Series(_infer_pos(use), index=use.index)
+    key = pd.MultiIndex.from_arrays([hist["season"], hist["athlete_id"]])
+    new = pd.Series(inferred.reindex(key).to_numpy(), index=hist.index)
+    return new.where(hist["pos_src"] == "usage", hist["pos"]).fillna(hist["pos"])
 
 
 # --------------------------------------------------------------------------- features (point in time)
@@ -300,6 +323,7 @@ def features(data: CFBData, season: int, week: int, table_id: str, params: CFBPa
     fp = data.points(table_id)
     L = data.lines.assign(fp=fp)
     hist = cfbdata.before(L, season, week)
+    hist = hist.assign(pos=point_in_time_pos(hist))
     cur = hist[hist["season"] == season]
     prev = hist[hist["season"] == season - 1]
     tgw = data.team_games[(data.team_games["season"] == season) & (data.team_games["week"] == week)]
@@ -419,6 +443,7 @@ def role_prior_slope(data: CFBData, season: int, week: int, table_id: str, basis
     fp = data.points(table_id)
     L = cfbdata.before(data.lines.assign(fp=fp), season, week)
     L = L[L["season"] >= season - 1]
+    L = L.assign(pos=point_in_time_pos(L))
     L = L.drop(columns=[c for c in ("usage_ok",) if c in L.columns]).merge(
         data.team_totals[["game_id", "team_id", *TEAM_USAGE_COLS, "usage_ok"]], on=["game_id", "team_id"], how="left")
     L = L[L["usage_ok"].fillna(False).astype(bool)]
