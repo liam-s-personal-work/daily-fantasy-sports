@@ -9,6 +9,7 @@ Research notes behind every status: docs/research/sources_compliance.md.
 
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import urlparse
 
@@ -32,12 +33,17 @@ REGISTER: dict[str, dict] = {
     "fanduel": {"status": "PROHIBITED", "terms": "user downloads/uploads CSVs by hand; no automation of the site", "url": "https://www.fanduel.com"},
 }
 
-# Page fetches agents may make (everything else is denied by the SDK permission layer).
-FETCH_ALLOW_DOMAINS = ["api.weather.gov", "www.weather.gov", "forecast.weather.gov", "open-meteo.com",
-                       "api.open-meteo.com", "raw.githubusercontent.com"]
 # Facts sourced from these hosts are dropped (DFS sites, paywalled or no-automation sites).
 BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|dkapi|rotowire\.com|fantasypros\.com|"
                            r"sports-reference\.com|pro-football-reference\.com|stathead\.com)$", re.I)
+
+
+# Page fetches agents may make (everything else is denied by the SDK permission layer).
+FETCH_ALLOW_DOMAINS = ["api.weather.gov", "www.weather.gov", "forecast.weather.gov", "open-meteo.com",
+                       "api.open-meteo.com", "raw.githubusercontent.com"]
+# Add domains you have confirmed allow automated access: DFS_FETCH_ALLOW="www.patriots.com,www.chicagobears.com"
+FETCH_ALLOW_DOMAINS += [d.strip() for d in os.environ.get("DFS_FETCH_ALLOW", "").split(",")
+                        if d.strip() and not BLOCKED_HOSTS.search(d.strip())]
 
 
 class SourceNotAllowed(PermissionError):

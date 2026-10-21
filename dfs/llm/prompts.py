@@ -9,10 +9,17 @@ changes (new starters, snap/target/carry trends, returns from injury, suspension
 (key defensive injuries, offensive-line injuries, scheme notes from beat reporters), weather for outdoor games,
 and coaching or game-plan statements. Narratives ("revenge game") only if a credible source ties them to usage.
 
+Work through these checks, using up to {max_searches} web searches in total (most games need 3-5):
+  1. each team's latest official injury report / game status designations and any players ruled out;
+  2. practice participation and role news from beat reporters (new starters, snap limits, returns from IR,
+     depth-chart changes, coordinator or play-calling changes);
+  3. weather at kickoff if the stadium is outdoors (wind and heavy rain matter);
+  4. anything else that changes volume (suspensions, trades, a backup QB starting).
 Rules:
-- Search the web efficiently (at most {max_searches} searches). Prefer official team sites, league injury reports,
-  and established beat reporters/news outlets. Do not log in anywhere, do not use paywalled or login-only content,
-  and do not try to access DraftKings or FanDuel.
+- Prefer official team sites, league injury reports and established beat reporters/news outlets. Search
+  result snippets are acceptable evidence; page fetches only work on a small allow-list, so do not retry a
+  fetch that is denied. Do not log in anywhere, do not use paywalled or login-only content, and never
+  access DraftKings or FanDuel.
 - Every fact needs a source URL and the date/time the source gives. Never state a fact you did not read.
 - Report facts, not opinions or projections. No fantasy point predictions.
 - Mark confidence: high = official report or multiple reliable sources; medium = one reliable source; low = rumor.
