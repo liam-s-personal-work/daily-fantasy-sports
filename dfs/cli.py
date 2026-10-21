@@ -49,16 +49,20 @@ def _user_rules(path: str | None):
     return UserRules(**yaml.safe_load(Path(path).read_text()))
 
 
+def _now(text: str | None) -> datetime | None:
+    if not text:
+        return None
+    t = datetime.fromisoformat(text)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def _run(args) -> int:
     from dfs.pipeline import RunConfig, run
     cfg = RunConfig(out_dir=Path(args.out), budget_usd=args.budget, deadline_min=args.deadline,
                     web_research=not args.no_web, forecaster=not args.no_forecast, n_sims=args.sims,
                     target_top=args.target_top, field_size=args.field_size, user_rules=_user_rules(args.rules),
                     season=args.season, week=args.week, replay_only=args.replay)
-    now = datetime.fromisoformat(args.now) if args.now else None
-    if now is not None and now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    res = run(args.file, cfg, now=now)
+    res = run(args.file, cfg, now=_now(args.now))
     print(f"\nupload file: {res.upload_path}")
     if res.rules_upload_path:
         print(f"lineup with your rules: {res.rules_upload_path}")
@@ -68,8 +72,20 @@ def _run(args) -> int:
 
 def _lastcall(args) -> int:
     from dfs.lastcall import lastcall
-    out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web)
-    print(json.dumps(out, indent=1, default=str))
+    out = lastcall(Path(args.run_dir), threshold=args.threshold, web=not args.no_web, now=_now(args.now))
+    from dfs.lastcall import load_run
+    c = load_run(Path(args.run_dir))["contest"]
+    print(f"\n{'CHANGED' if out['changed'] else 'unchanged'}: {out['reason']}")
+    for k, u in (out.get("news") or {}).items():
+        print(f"  news  {c.players[k].name}: {u.get('status')}: {u.get('text', '')[:140]}")
+    for s in out["final"].slots:
+        p = c.players[s.player_key]
+        print(f"  {s.slot:<6} {p.name} ({p.team}){'  [locked]' if s.player_key in set(out.get('locked') or []) else ''}")
+    m = out.get("metric")
+    if m and out.get("current"):
+        print(f"  {m}: current {out['current'].get(m, 0):.4f}, final {(out.get('new') or out['current']).get(m, 0):.4f}")
+    print(f"upload file: {out['upload']}  (model spend ${out['llm'].get('cost_usd', 0):.2f}, "
+          f"{out['llm'].get('web_searches', 0)} searches; details in lastcall.json)")
     return 0
 
 
@@ -117,7 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=_run)
 
     s = sub.add_parser("lastcall"); s.add_argument("run_dir"); s.add_argument("--threshold", type=float, default=0.01)
-    s.add_argument("--no-web", action="store_true"); s.set_defaults(fn=_lastcall)
+    s.add_argument("--no-web", action="store_true")
+    s.add_argument("--now", help="ISO time to run as; default: the real time"); s.set_defaults(fn=_lastcall)
 
     s = sub.add_parser("windows"); s.add_argument("run_dir"); s.add_argument("--lead", type=int, default=60)
     s.set_defaults(fn=_windows)
