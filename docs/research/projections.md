@@ -1,5 +1,7 @@
 # DFS player projections and distributions: methodology research (verified edition)
 
+> Paths under `scratch/` refer to verification scripts and downloads from the research session; they are not in the repo.
+
 Research input for the `liam-clifford/daily-fantasy-sports` lineup engine. The original was written 2026-10-21 and
 skeptically reviewed the same day. This file stands alone and replaces `projections.md`.
 
@@ -25,11 +27,11 @@ here is meant to be turned into code.
      ffopportunity package, the `implied` R package vignette, the `shin` Python package, `goalmodel`, the `loo` CRPS
      source, the CQR authors' repo, the CFBD official SDK docs, and the statsmodels 0.15.0 source.
   2. Every derived formula and worked example, re-computed numerically
-     (`/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/scripts/mathcheck.py`).
+     (`scratch/scripts/mathcheck.py`).
   3. **Many empirical NFL claims, re-estimated from nflverse 2021–2025 data** (§E). This is the strongest evidence in
      this file, and it overturns several of the original's published numbers.
   4. DFS scoring facts, cross-checked against the sibling verified file
-     `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/research/scoring.verified.md`.
+     `scratch/research/scoring.verified.md`.
 
 ### V.2 Tag legend
 
@@ -68,7 +70,7 @@ Data: nflverse weekly player stats 2021–2025
 `https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv`. All rows are regular season only.
 
 Scripts (run with `python3 -I <script> <data dir>`), all in
-`/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/scripts/`:
+`scratch/scripts/`:
 `qrate.py` (injury designations), `nflemp.py` (CV and correlations), `yoy.py` (stability), `checks_misc.py` (spread,
 plays, yardage shape, QB–QB, DST) and `mathcheck.py` (formulas).
 
@@ -1106,9 +1108,9 @@ research and LLM calls, not this stage. CFBD calls are capped at 1,000 a month o
   https://raw.githubusercontent.com/forecastingresearch/forecastbench/main/README.md (arXiv 2409.19839, ICLR 2025)
 - CFBD: https://raw.githubusercontent.com/CFBD/cfbd-net/main/docs/authentication.md
 - Sibling verified files (same workflow):
-  `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/research/scoring.verified.md`,
-  `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/research/sources_compliance.verified.md`
-- Scripts: `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/scripts/`
+  `scratch/research/scoring.verified.md`,
+  `scratch/research/sources_compliance.verified.md`
+- Scripts: `scratch/scripts/`
   (`mathcheck.py`, `qrate.py`, `nflemp.py`, `yoy.py`, `checks_misc.py`)
 
 ### Cited by the original, not reachable today (UNVERIFIED)

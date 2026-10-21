@@ -1,5 +1,7 @@
 # Critical review of the draft DFS pipeline, plus a revised pipeline
 
+> Paths under `scratch/` refer to verification scripts and downloads from the research session; they are not in the repo.
+
 Key: `pipeline_critique` · Written 2026-10-21 · Repo: `liam-clifford/daily-fantasy-sports`
 Perspective: a DFS professional, a quantitative modeller and a software architect reviewing the user's 13-step
 draft (quoted in §4). The aim is a design that can be coded. Every issue has a severity, a reason and a fix.
@@ -25,7 +27,7 @@ draft (quoted in §4). The aim is a design that can be coded. Every issue has a 
   - Everything else is relayed from sibling notes. Where I could not re-check a claim myself, it carries
     one confidence level lower than the sibling gave it (high becomes medium).
 - **Derived numbers.** These come from
-  `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/calc/critique_calcs.py`
+  `scratch/calc/critique_calcs.py`
   (seeded, run today).
   - Numbers from the toy model show orders of magnitude only. They are **not** empirical claims about
     real slates.

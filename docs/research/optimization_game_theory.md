@@ -1,5 +1,7 @@
 # Lineup optimization and DFS game theory: what a top-~2% finish takes (VERIFIED EDITION)
 
+> Paths under `scratch/` refer to verification scripts and downloads from the research session; they are not in the repo.
+
 Research input for the DFS lineup engine (repo `liam-clifford/daily-fantasy-sports`). Draft written 2026-10-21; skeptical review and corrections on 2026-10-21.
 This file replaces `optimization_game_theory.md`. It is self-contained.
 
@@ -23,12 +25,12 @@ S-keys resolve to URLs in the table below.
 
 **Verification scripts and data (all in the scratchpad):**
 
-- Downloads: `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_og/dl/` and `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_og/dl2/`
+- Downloads: `scratch/verify_og/dl/` and `scratch/verify_og/dl2/`
 - Scripts:
-  - `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_og/scripts/stats_check.py`: quantiles, sample sizes, payout SD
-  - `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_og/scripts/hall_check.py`: Hall exactness and timings
-  - `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_og/scripts/dist_check.py`: lineup score distribution
-- The original benchmark and simulation code is in `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/bench/`. I re-ran `bench_ilp.py`, `bench_slots.py` and `bench_hall.py`, and re-aggregated `results/*.jsonl`.
+  - `scratch/verify_og/scripts/stats_check.py`: quantiles, sample sizes, payout SD
+  - `scratch/verify_og/scripts/hall_check.py`: Hall exactness and timings
+  - `scratch/verify_og/scripts/dist_check.py`: lineup score distribution
+- The original benchmark and simulation code is in `scratch/bench/`. I re-ran `bench_ilp.py`, `bench_slots.py` and `bench_hall.py`, and re-aggregated `results/*.jsonl`.
 
 ### Source keys
 
@@ -50,7 +52,7 @@ S-keys resolve to URLs in the table below.
 | S14 | https://raw.githubusercontent.com/rogerfitz/tutorials/HEAD/draft_kings_contests_scrape/data/contest-standings-43293784.csv | Real DK contest-standings export (about 2017) |
 | S15 | https://raw.githubusercontent.com/kbw612/Fantasy/HEAD/NFL/2025/DK/DK-main-slate-contest-standings-week16.csv (also `.../2025/DK/...week13.csv`, `.../2024/DK/...week16.csv`) | Real DK NFL main-slate standings, 2025 W16 (top 409 ranks of a 150-max GPP) |
 | L1 | local: `bench/bench_ilp.py`, `bench_slots.py`, `bench_hall.py`, `sim_gpp.py`, `results/*.jsonl`, plus the `verify_og/scripts/*.py` above | re-runs and recomputations, 4 vCPU sandbox, Python 3.13 |
-| SIB | `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/research/site_formats.verified.md` | sibling review of real DK/FD files; cited where I did not re-fetch its sources myself |
+| SIB | `scratch/research/site_formats.verified.md` | sibling review of real DK/FD files; cited where I did not re-fetch its sources myself |
 
 ### The most important corrections (read these first)
 

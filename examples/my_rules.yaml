@@ -1,5 +1,7 @@
 # Your own pick rules. The engine solves them as a second lineup (upload_my_rules.csv) next to its own.
-# Names or player keys ("TEAM|name|POS") both work. Delete any line you do not need.
+# Names or player keys ("TEAM|name|POS") both work; write "Name (TEAM)" when two players share a name.
+# Every name, team and game must be on the slate you run, or the rules lineup is skipped with a warning.
+# The names below are examples from a 2026 week 7 slate. Delete any line you do not need.
 lock: [Puka Nacua]               # must be in the lineup
 exclude: [Travis Kelce]          # never in the lineup
 exclude_teams: [NYJ]

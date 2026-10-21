@@ -1,5 +1,7 @@
 # DraftKings and FanDuel scoring rules: fact-checked research for the DFS lineup engine
 
+> Paths under `scratch/` refer to verification scripts and downloads from the research session; they are not in the repo.
+
 Research date: 2026-10-21. Topic key: `scoring`. This file replaces `scoring.md`. It keeps that file's design
 material (tables, edge cases, worked examples, engine design) and corrects it where needed.
 
@@ -52,7 +54,7 @@ Inline tags:
 | V17 | pydfs-lineup-optimizer 3.6.1 (PyPI sdist), `sites/*/settings.py` ; https://github.com/DimaKudosh/pydfs-lineup-optimizer | Open-source roster, cap and team-limit encodings (~2021–22) |
 | V18 | https://github.com/BenBrostoff/draftfast/blob/master/draftfast/rules.py | Open-source rules. Quotes FD support: "Up to five players from same team, provided one is a pitcher." |
 | V19 | https://github.com/dachhack/ffgame/blob/HEAD/packages/core/src/sports/mlb.ts | 2026 note restating the DK MLB points set |
-| site_formats Wn | Search snippets that another agent gathered in `/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/research/site_formats.md`, **not re-checked today**: W1 https://www.fanduel.com/research/fanduel-launches-new-single-game-daily-fantasy-format ; W4 https://linestar-nfl-dfs-player-props.beehiiv.com/p/top-nfl-dfs-plays-props-eagles-vs-cowboys-kickoff-edition-single-game-dfs-strategy-tips ; W5 https://www.fanduel.com/nhl-guide?t=rules ; W8 https://dfshero.com/help/sports/cfb ; W9 https://www.pff.com/news/fantasy-week-1-college-dfs-plays-on-draftkings ; W10 https://www.stokastic.com/articles/dfs-strategy/college-football-showdown-strategy ; W11 https://www.thefantasyfootballers.com/dfs/dfs-101-beginners-guide-fanduel | Used only as corroboration |
+| site_formats Wn | Search snippets that another agent gathered in `scratch/research/site_formats.md`, **not re-checked today**: W1 https://www.fanduel.com/research/fanduel-launches-new-single-game-daily-fantasy-format ; W4 https://linestar-nfl-dfs-player-props.beehiiv.com/p/top-nfl-dfs-plays-props-eagles-vs-cowboys-kickoff-edition-single-game-dfs-strategy-tips ; W5 https://www.fanduel.com/nhl-guide?t=rules ; W8 https://dfshero.com/help/sports/cfb ; W9 https://www.pff.com/news/fantasy-week-1-college-dfs-plays-on-draftkings ; W10 https://www.stokastic.com/articles/dfs-strategy/college-football-showdown-strategy ; W11 https://www.thefantasyfootballers.com/dfs/dfs-101-beginners-guide-fanduel | Used only as corroboration |
 
 Confidence after this check:
 - **high**: a primary capture (V1, V5, V9, V10) or a DK/FD-dated 2025–26 transcription (V2, V3, V7, V8), corroborated by a second independent source.
@@ -573,7 +575,7 @@ dk.tennis.classic:   # ALL VALUES [UNVERIFIED] (recollection; two GitHub code se
 ## 4. Worked examples (these become unit tests)
 
 Every arithmetic value below was re-run today with `Decimal`
-(`/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/vs_scripts/recheck_examples.py`),
+(`scratch/vs_scripts/recheck_examples.py`),
 and all of them match. **The stat lines of E1–E5 were independently re-derived today from nflverse 2026 data (V10)**, and the DK
 table reproduces the DK totals the original took from DK's articles. The articles themselves could not be fetched today, so
 the "(DK: x)" values are [UNVERIFIED] as quotations but agree with the verified table.

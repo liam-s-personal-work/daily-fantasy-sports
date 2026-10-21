@@ -14,9 +14,11 @@ import re
 from urllib.parse import urlparse
 
 REGISTER: dict[str, dict] = {
-    "nflverse": {"status": "CONDITIONAL", "terms": "CC-BY-4.0 (FTN data CC-BY-SA-4.0); attribute nflverse; upstream NFL rights retained",
+    "nflverse": {"status": "CONDITIONAL", "terms": "CC-BY-4.0 (FTN data CC-BY-SA-4.0); attribute nflverse; upstream NFL rights "
+                 "retained; depth charts are ESPN-derived copies: personal use, no redistribution",
                  "url": "https://github.com/nflverse/nflverse-data"},
-    "sportsdataverse": {"status": "CONDITIONAL", "terms": "pre-built release files, no scraping; ESPN/CFBD-derived, upstream rights retained",
+    "sportsdataverse": {"status": "CONDITIONAL", "terms": "pre-built GitHub release files, no scraping; college box scores, "
+                        "rosters, teams and lines are ESPN-derived copies: personal use, no redistribution; upstream rights retained",
                         "url": "https://github.com/sportsdataverse/sportsdataverse-data/releases"},
     "anthropic_web_search": {"status": "ALLOWED", "terms": "server-side search via Claude; cite sources",
                              "url": "https://platform.claude.com/docs"},
@@ -25,7 +27,8 @@ REGISTER: dict[str, dict] = {
     "open_meteo": {"status": "CONDITIONAL", "terms": "free for non-commercial use with attribution", "url": "https://open-meteo.com"},
     "nws": {"status": "ALLOWED", "terms": "US government API; send a User-Agent", "url": "https://api.weather.gov"},
     "sleeper": {"status": "UNCLEAR", "terms": "docs not read; believed free read-only API", "url": "https://docs.sleeper.com"},
-    "espn_api": {"status": "UNCLEAR", "terms": "undocumented endpoints; Disney terms", "url": "https://disneytermsofuse.com"},
+    "espn_api": {"status": "PROHIBITED", "terms": "undocumented endpoints; Disney terms (ESPN-derived copies published "
+                 "by nflverse/sportsdataverse are used instead, for personal use)", "url": "https://disneytermsofuse.com"},
     "sports_reference": {"status": "PROHIBITED", "terms": "bot policy restricts automated collection", "url": "https://www.sports-reference.com/bot-traffic.html"},
     "fantasypros": {"status": "PROHIBITED", "terms": "no scraping; consensus numbers also break the forecaster's blind", "url": "https://www.fantasypros.com"},
     "rotowire": {"status": "PROHIBITED", "terms": "paywall", "url": "https://www.rotowire.com"},
@@ -40,7 +43,8 @@ BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|draftkings\.\w+
                            r"underdogfantasy\.com|numberfire\.com|rotogrinders\.com|4for4\.com|actionnetwork\.com|"
                            r"covers\.com|vegasinsider\.com|oddsshark\.com|sportsline\.com|betmgm\.com|caesars\.com|"
                            r"williamhill\.com|pointsbet\.com|bet365\.com|betrivers\.com|fanatics\.com|espnbet\.com|"
-                           r"sleeper\.com|dailyfantasyfuel\.com|fantasylabs\.com|establishtherun\.com|stokastic\.com)$", re.I)
+                           r"sleeper\.com|dailyfantasyfuel\.com|fantasylabs\.com|establishtherun\.com|stokastic\.com|"
+                           r"api\.espn\.com|cdn\.espn\.com|fantasy\.espn\.com)$", re.I)
 BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy-projections)(/|$|-)", re.I)
 
 
@@ -81,11 +85,13 @@ _LEAKS = [
     re.compile(r"\b(draftkings|fanduel|dk(?! metcalf\b)|fd|prizepicks|underdog)\b", re.I),
     re.compile(r"(avg ?points ?per ?game|site average|points per game average)", re.I),
     # betting markets
-    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied|point total|team total|"
+    re.compile(r"\b(spread|over[-/ ]?under|o/u|moneyline|money line|implied (team )?(total|points?)|implied \d|"
+               r"point total|team total|"
                r"game total|(?<!las )vegas|bettors?|betting|sportsbooks?|oddsmakers?|bookmakers?|books? (have|has|make)|"
-               r"props?\b|(laying|giving|getting) (\d|one|two|three|four|five|six|seven|a field goal|a touchdown)|"
+               r"props?\b|(laying|giving|getting) (\d+(\.5)?|one|two|three|four|five|six|seven|a field goal|a touchdown)"
+               r"( and a half)? points?\b|(laying|giving) (a field goal|a touchdown)|"
                r"by \d{1,2}(\.5)? points|by \d{1,2}\.5\b|totals?\s*(of|is|at|sits at|:)\s*\d{2}|pick'?em|"
-               r"line (is|of|at|sits)\b|listed at \d{4}\b)", re.I),
+               r"line (is|of|at|sits)( at)? [a-z]{0,4}\s*[+\-\u2212]?\d|listed at \d{4}\b)", re.I),
     re.compile(r"½"),
     re.compile(rf"(?<![\w.]){_SIGN}\d{{3}}\b"),  # American odds
     re.compile(r"\b(favou?rites?|underdogs?|favou?red by|dogs? of|line (moved|movement)|odds)\b", re.I),

@@ -30,7 +30,9 @@ it, surface its warnings, and relay its results honestly.
 
 `python -m dfs.cli lastcall runs/<id>`: searches news on every pick, checks inactives,
 re-forecasts affected NFL players, keeps started games locked, and changes the lineup only if a pick
-is out or a new lineup leads by more than 1%. Hand over `runs/<id>/upload_final.csv`. If it prints
+is out or a new lineup leads by more than 1%. Hand over `runs/<id>/upload_final.csv`. It assumes the
+site holds the run's `upload.csv`; if the user entered something else, or games have started, ask them
+to download the entries file again and pass `--entries <file>`. If it prints
 "WARNING: the news/inactives check FAILED", say so plainly: those picks were not checked.
 
 ## After the slate

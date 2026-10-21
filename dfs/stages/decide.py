@@ -217,9 +217,16 @@ class Decider:
                 mine = _resolve_names(c, list(cfg.user_rules.lock))
                 if mine & excluded:
                     self.report["user_overrode_cuts"] = sorted(mine & excluded)
-                rules_lu, _ = self._choose(means, excluded - mine, "your rules", user_rules=cfg.user_rules)
+                # with an entries file the rules lineup goes to the first entry, so it keeps that entry's locks
+                locks = {}
+                if c.entries:
+                    from dfs.pipeline import entry_lock_groups
+                    locks = next((dict(lk) for lk, idx in entry_lock_groups(c, self.now).items() if 0 in idx), {})
+                rules_lu, _ = self._choose(means, excluded - mine, "your rules", user_rules=cfg.user_rules,
+                                           slot_locks=locks or None)
             except Infeasible as e:
                 self.report["user_rules_error"] = str(e)
+                self.log(f"WARNING: your rules lineup could not be built: {e}")
         legal = check_legal(c, final)
         if legal:
             raise Infeasible(f"final lineup failed the independent legality check: {legal}")
@@ -286,6 +293,8 @@ class Decider:
         lines += ["", f"Salary {d.final.salary} / {r.salary_cap}; projected mean {d.final.mean:.1f}"]
         for k, v in d.final.metrics.items():
             lines.append(f"- {k}: {v:.4g}")
+        if self.report.get("user_rules_error"):
+            lines += ["", f"> WARNING: your rules lineup was not built: {self.report['user_rules_error']}"]
         if d.rules_lineup is not None:
             lines += ["", "## Lineup with your rules", ""]
             lines += [f"- {s.slot}: {c.players[s.player_key].name} ({s.salary})" for s in d.rules_lineup.slots]

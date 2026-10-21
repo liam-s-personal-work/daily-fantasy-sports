@@ -154,10 +154,10 @@ def blinded_facts_text(dossiers: dict[str, GameDossier]) -> str:
     from dfs.sources import blind_text
     out = []
     for g, d in dossiers.items():
-        rows = [f"[{f.id}] ({f.kind}, {f.confidence}) {f.subject}: {f.text}" for f in d.facts
+        # (no bare 'ruled out' list: an out must be shown by a fact, and the facts carry their status)
+        rows = [f"[{f.id}] ({f.kind}, {f.confidence}{', ' + f.status if f.status and f.status != 'none' else ''}) "
+                f"{f.subject}: {f.text}" for f in d.facts
                 if f.kind != "line" and blind_text(f"{f.subject} {f.text}") is not None]
-        if d.ruled_out:
-            rows.insert(0, f"   ruled out: {', '.join(n for n in d.ruled_out if blind_text(n) is not None)}")
         out.append(f"## {g}\n" + "\n".join(rows))
     return "\n".join(out)
 
@@ -217,6 +217,8 @@ def parse_research(results: list[AgentResult], now: datetime | None = None) -> d
         o = r.output
         facts = []
         for i, f in enumerate(o.get("facts", []), 1):
+            if not (f.get("source_url") or "").strip():
+                continue  # every fact must be cited
             if host_blocked(f.get("source_url")):
                 continue  # never carry facts lifted from DFS sites or no-automation sources
             if _after(f.get("as_of"), now):
@@ -333,6 +335,8 @@ def _verified(fact_ids: list[str], idx: dict[str, Fact], key: str, contest: Cont
 def _names_player(f: Fact, key: str, contest: Contest) -> bool:
     """For inactive lists: a fact whose subject lists several players ('A / B / C') or the team, and
     whose text names this player in full."""
+    if (f.status or "").lower() not in ("inactive", "out") or not re.search(r"inactive", f.text or "", re.I):
+        return False  # only an inactives list, whose every name is out, can speak for several players
     n = key_name(key, contest)
     if n in {_subject_name(x) for x in re.split(r"\s*[/,&]\s*", f.subject or "")}:
         return True

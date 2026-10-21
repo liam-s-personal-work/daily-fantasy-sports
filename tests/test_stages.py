@@ -348,8 +348,10 @@ def test_research_prompt_has_time_and_no_market():
                               now=datetime(2026, 10, 25, 14, 37, tzinfo=timezone.utc))[0]
     assert "favoured" not in t.prompt and "As of: 2026-10-25 14:00 UTC" in t.prompt
     r = AgentResult(name=f"research:{c.games[0]}", ok=True, output={"summary": "s", "ruled_out": [], "doubtful_or_questionable": [],
-        "facts": [{"subject": "X", "kind": "status", "text": "a", "as_of": "2026-10-26", "confidence": "high"},
-                  {"subject": "Y", "kind": "status", "text": "b", "as_of": "2026-10-24T18:00", "confidence": "high"}]})
+        "facts": [{"subject": "X", "kind": "status", "text": "a", "as_of": "2026-10-26", "confidence": "high",
+                   "source_url": "https://www.nfl.com/a"},
+                  {"subject": "Y", "kind": "status", "text": "b", "as_of": "2026-10-24T18:00", "confidence": "high",
+                   "source_url": "https://www.nfl.com/b"}]})
     d = agents.parse_research([r], now=datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc))
     assert [f.subject for f in d[c.games[0]].facts] == ["Y"]  # the fact dated after the run's time is dropped
 
@@ -457,3 +459,32 @@ def test_runner_caps_never_exceed_the_budget():
     tasks = [AgentTask(stage="research", name=f"r{i}", system="x", prompt=f"p{i}", schema={"type": "object"}) for i in range(8)]
     asyncio.run(r.run_all(tasks))
     assert r.spent_usd <= 2.0 + 1e-6
+
+
+def test_uncited_research_facts_are_dropped():
+    r = AgentResult(name="research:A@B", ok=True, output={"summary": "", "ruled_out": [], "doubtful_or_questionable": [],
+        "facts": [{"subject": "X", "kind": "status", "status": "out", "text": "ruled out", "confidence": "high"},
+                  {"subject": "Y", "kind": "status", "status": "out", "text": "ruled out", "confidence": "high",
+                   "source_url": "https://www.nfl.com/x"}]})
+    assert [f.subject for f in agents.parse_research([r])["A@B"].facts] == ["Y"]
+
+
+@pytest.mark.parametrize("text", ["The offensive line is banged up: C Cam Jurgens (concussion) out",
+                                  "He is getting two more carries a game since the trade",
+                                  "Implied in the coach's comments: he starts Sunday"])
+def test_blind_keeps_ordinary_football_text(text):
+    assert blind_text(text) == text
+
+
+def test_one_team_fact_proves_outs_only_as_an_inactives_list():
+    c = _named_contest()
+    g = c.players["BUF|khalil shakir|WR"].game
+    report = Fact(id=f"{g}.F1", subject="BUF", team="BUF", kind="injury", status="out", confidence="high",
+                  text="Injury report: Khalil Shakir questionable, Dalton Kincaid out", source_url="https://x.com/a")
+    d = GameDossier(game=g, summary="", ruled_out=["Khalil Shakir"], facts=[report])
+    assert agents.ruled_out_keys(c, {g: d}) == set()  # one status cannot speak for several players
+
+
+def test_forecaster_does_not_see_unproven_ruled_out_names():
+    d = GameDossier(game="A@B", summary="", ruled_out=["Josh Allen"], facts=[])
+    assert "Josh Allen" not in agents.blinded_facts_text({"A@B": d})

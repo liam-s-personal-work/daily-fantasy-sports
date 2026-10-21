@@ -14,6 +14,9 @@ The plan, the design decisions and every measured result are in **[docs/PLAN.md]
 pip install -e ".[data,agents,dev]"     # Python 3.11+
 ```
 
+Install it editable (`-e`), as above. The learned blend weights in `data/learned/` and the data caches live
+in the repo folder, so a plain `pip install .` runs on the priors and says so.
+
 - `data` pulls in nflverse access.
 - `agents` pulls in the Claude Agent SDK, which needs Claude credentials in the environment.
 - Without `agents` the engine still runs end to end, using the statistical baseline only.
@@ -43,8 +46,13 @@ Useful `run` flags:
   pass `--allow-lookahead`, because it would see the results.
 - `--replay`: answer every model stage from cache.
 
-`dfs lastcall runs/<id> --entries DKEntries.csv` checks against a freshly downloaded entries file, whose
-locked cells are the site's own record.
+The last call assumes the site holds the lineups the run wrote (`upload.csv`). If you entered something
+else, or want to be safe after the first kickoff, download the entries file again and pass it:
+`dfs lastcall runs/<id> --entries DKEntries.csv`. Each entry then starts from what the site holds, and the
+site's `(LOCKED)` cells stay where they are.
+
+Keep your contest files wherever you like. In the repo folder, `DK*.csv`, `FD*.csv`, `FanDuel*.csv` and
+`*contest-standings*.csv` are git-ignored, so they are never committed by accident.
 
 Pick rules (`--rules`) are a small YAML file; see [examples/my_rules.yaml](examples/my_rules.yaml).
 
@@ -64,6 +72,16 @@ Inside Claude Code, the `/dfs` skill runs the same steps.
 
 ```
 python -m pytest -q                      # offline suite (synthetic, format-exact fixtures)
-python -m pytest -q -m network           # tests that download nflverse data
-DFS_LIVE=1 python -m pytest -q -m live   # tests that make real Claude calls (costs money)
+python -m pytest -q -m network           # tests that download nflverse and sportsdataverse data
 ```
+
+One network test also needs a real FD salary file in `data/cache/real_samples/` and skips without it.
+
+## Data credits
+
+- NFL data: [nflverse](https://github.com/nflverse/nflverse-data), CC-BY-4.0 (FTN charting data
+  CC-BY-SA-4.0). The NFL keeps its rights in the underlying data. The derived results in `docs/results/`
+  and `data/learned/` are built from it.
+- College data: [sportsdataverse](https://github.com/sportsdataverse) release files (cfbfastR
+  play-by-play, ESPN-derived box scores, rosters and lines). Used for personal, non-commercial analysis;
+  not redistributed. See `docs/PLAN.md` §5.

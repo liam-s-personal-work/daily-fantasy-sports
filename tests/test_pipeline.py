@@ -13,7 +13,15 @@ from dfs.lastcall import lastcall
 from dfs.llm.backend import FakeBackend
 from dfs.models import UserRules
 from dfs.optimize.ilp import check_legal
-from dfs.pipeline import RunConfig, run
+from dfs.pipeline import RunConfig
+from dfs.pipeline import run as _run
+
+FIXTURE_MORNING = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)  # 8 AM ET on the fixtures' game day
+
+
+def run(path, cfg, backend=None, log=print, now=FIXTURE_MORNING):
+    """The pipeline as of a fixed time before the fixtures' kickoffs, so the tests never depend on today's date."""
+    return _run(path, cfg, backend=backend, log=log, now=now)
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -34,7 +42,9 @@ def fake(strategist=None, checker=None, news=None, backup=None):
 
 @pytest.fixture
 def cfg(tmp_path):
-    return RunConfig(out_dir=tmp_path / "runs", provider="generic", n_sims=3000, learned_blend=None)
+    # allow_lookahead: the fake backend cannot see the future, and the fixed clock is in the past once the date passes
+    return RunConfig(out_dir=tmp_path / "runs", provider="generic", n_sims=3000, learned_blend=None,
+                     allow_lookahead=True)
 
 
 def test_run_writes_legal_upload_and_report(cfg):
@@ -333,3 +343,60 @@ def test_lastcall_after_kickoff_checks_against_the_uploaded_lineups(cfg):
         for was, now_id in zip(cells, final[eid]):
             if was in live:
                 assert now_id == was  # started cells of the uploaded lineup stay
+
+
+def test_backtest_command_passes_its_options(monkeypatch):
+    import dfs.backtest as bt
+    from dfs.cli import main
+    seen = {}
+    monkeypatch.setattr(bt, "main", lambda argv: seen.setdefault("argv", list(argv)) and 0)
+    main(["backtest", "--season", "2026", "--weeks", "3-6"])
+    assert seen["argv"] == ["--season", "2026", "--weeks", "3-6"]
+
+
+def test_rules_lineup_failure_is_visible(cfg, capsys):
+    from dfs.cli import main
+    rules = cfg.out_dir.parent / "rules.yaml"
+    rules.write_text("lock: [Nobody Atall]\n")
+    rc = main(["run", str(FIX / "dk_salaries_classic.csv"), "--no-web", "--no-forecast", "--replay", "--provider", "generic",
+               "--rules", str(rules), "--out", str(cfg.out_dir), "--now", "2026-10-25T12:00:00+00:00"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "WARNING: no lineup with your rules" in out and "Nobody Atall" in out
+    report = next(cfg.out_dir.glob("*/report.md")).read_text()
+    assert "your rules lineup was not built" in report
+
+
+def test_rules_lineup_keeps_the_first_entrys_locks(cfg):
+    some = "Test Sea WR2"
+    cfg.user_rules = UserRules(lock=[some])
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    assert res.rules_upload_path is not None
+    rows = list(csv.reader(open(res.rules_upload_path)))
+    assert rows[1][4] == res.contest.entries[0].current[0]  # the first entry's LOCKED QB
+
+
+def test_lastcall_with_a_fresh_entries_file_starts_from_the_site(cfg, tmp_path):
+    morning = datetime(2026, 10, 25, 8, 0, tzinfo=ET_)
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None, now=morning)
+    # the user never uploaded our lineups: the site still holds the original ones, and DK marks started cells
+    c = res.contest
+    after = datetime(2026, 10, 25, 13, 5, tzinfo=ET_)
+    live = {x.site_id for x in c.candidates if c.players[x.player_key].start_time <= after}
+    text = (FIX / "dk_entries_classic.csv").read_text(encoding="utf-8-sig")
+    for e in c.entries:
+        for sid in e.current:
+            if sid in live:
+                text = text.replace(f"({sid}),", f"({sid}) (LOCKED),").replace(f"({sid}) (LOCKED) (LOCKED)", f"({sid}) (LOCKED)")
+    fresh = tmp_path / "DKEntries_fresh.csv"
+    fresh.write_text(text, encoding="utf-8")
+    out = lastcall(res.run_dir, web=True, now=after, backend=fake(), log=lambda s: None, entries_file=fresh)
+    final = _cells(res.run_dir / "upload_final.csv")
+    for e in c.entries:
+        if e.entry_id not in final:  # an empty reservation with one game left cannot be filled legally
+            assert not any(e.current) and e.entry_id in out["entries"]["reservations_left_empty"]
+            continue
+        for was, now_id in zip(e.current, final[e.entry_id]):
+            if was in live:
+                assert now_id == was  # the site's started cells are kept, whatever the run had planned
+    assert out["entries"]["could_not_repair"] == []
+    assert len(final) >= 2

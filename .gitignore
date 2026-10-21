@@ -5,3 +5,16 @@ __pycache__/
 /runs/
 *.egg-info/
 .venv/
+# your own contest files and anything with credentials stay out of git
+/DK*.csv
+/FD*.csv
+/FanDuel*.csv
+*contest-standings*.csv
+.env
+.env.*
+.claude/settings.local.json
+.DS_Store
+build/
+dist/
+.mypy_cache/
+.ruff_cache/

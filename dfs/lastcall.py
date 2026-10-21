@@ -26,7 +26,7 @@ from dfs import blend as blend_mod
 from dfs import strategy
 from dfs.io.upload import write_upload
 from dfs.llm.backend import Backend, Runner, default_backend
-from dfs.models import Contest, Forecast, GameDossier, Lineup, Projection
+from dfs.models import Contest, Forecast, GameDossier, Lineup, LineupSlot, Projection
 from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, solve
 from dfs.sim import simulate
 from dfs.stages import agents
@@ -74,6 +74,26 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     runner = Runner(backend or default_backend(), cache_dir=run_dir.parent / "cache" / "llm",
                     budget_usd=float(cfg.get("lastcall_budget_usd", 4.0)), log=log)
     entry_lus = [Lineup.model_validate(x) for x in st["report"].get("lineups") or []] or [final]
+    eids = st["report"].get("entry_ids") or [e.entry_id for e in c.entries][:len(entry_lus)]
+    # What the site holds: the run's own upload (assumed entered), unless a freshly downloaded entries file
+    # says otherwise. Then each entry starts from the site's lineup, and the site's LOCKED cells stay put.
+    fresh: dict = {}
+    site_locked: dict[int, set[int]] = {}
+    rebuild: set[int] = set()  # entries the site holds empty (reservations): built only from players not yet started
+    if entries_file:
+        from dfs.io.contest_file import load_contest
+        fresh = {e.entry_id: e for e in load_contest(entries_file).entries}
+        for i, eid in enumerate(eids):
+            e = fresh.get(eid)
+            if e is None:
+                continue  # not in the fresh file: keep the run's lineup
+            if not all(e.current):
+                rebuild.add(i)
+                continue
+            held_lu = _lineup_from_cells(c, e.current)
+            if held_lu is not None:
+                entry_lus[i] = held_lu
+                site_locked[i] = {j for j, lk in enumerate(e.locked) if lk}
     picks = list(dict.fromkeys(k for lu in [final, *entry_lus] for k in lu.player_keys))
 
     # 1. news on every pick (web) + any outs supplied by a structured refresh
@@ -111,7 +131,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         refreshed, _ = agents.parse_forecasts(await runner.run_all(ft), set(c.players))
         if refreshed:
             base = json.loads((run_dir / "baseline.json").read_text())
-            se, wk = base.get("season"), base.get("week")
+            se, wk = base.get("season") or cfg.get("season"), base.get("week") or cfg.get("week")
             newp = blend_mod.blend({k: st["baseline"][k] for k in refreshed if k in st["baseline"]}, refreshed,
                                    c.players, "nfl",
                                    learned=blend_mod.unless_fit_on(blend_mod.load_learned(cfg.get("learned_blend")), se, wk),
@@ -124,8 +144,8 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         t = c.players[k].start_time
         return bool(t and t <= now)
 
-    def slot_locks(lu: Lineup) -> dict[int, str]:
-        return {i: s.site_id for i, s in enumerate(lu.slots) if has_started(s.player_key)}
+    def slot_locks(lu: Lineup, locked_cells: set[int] = frozenset()) -> dict[int, str]:
+        return {i: s.site_id for i, s in enumerate(lu.slots) if has_started(s.player_key) or i in locked_cells}
 
     started_all = {k for k in c.players if has_started(k)}
     warnings: list[str] = []
@@ -167,8 +187,19 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     # 4. every entry: those holding the final lineup follow the decision above; the others are
     #    repaired only if a pick is out (their own locked cells and started players stay put)
     means = {k: p.mean for k, p in proj.items()}
-    repaired, unrepaired, final_lus = 0, [], []
+    repaired, unrepaired, left_empty, final_lus, final_eids = 0, [], [], [], []
     for i, lu in enumerate(entry_lus):
+        eid = eids[i] if i < len(eids) else None
+        if i in rebuild:  # an empty reservation after kickoff: only players whose games have not started
+            try:
+                lu_new = solve(c, means, SolveOptions(exclude_keys=started_all | swap_out, time_limit_s=10),
+                               label=f"entry {i + 1} (reservation)")
+                final_lus.append(lu_new)
+                final_eids.append(eid)
+            except Infeasible:
+                left_empty.append(eid)  # no legal lineup from the open games: left as it is on the site
+            continue
+        final_eids.append(eid)
         if lu.player_keys == final.player_keys:
             final_lus.append(chosen)
             continue
@@ -180,7 +211,8 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         fixed = None
         for lock in (keep, set()):  # smallest change first, then any legal lineup around the started picks
             try:
-                fixed = solve(c, means, SolveOptions(slot_locks=slot_locks(lu), lock_keys=lock - started_all,
+                fixed = solve(c, means, SolveOptions(slot_locks=slot_locks(lu, site_locked.get(i, set())),
+                                                     lock_keys=lock - started_all,
                                                      exclude_keys=(started_all - set(lu.player_keys)) | swap_out,
                                                      time_limit_s=10), label=f"entry {i + 1} repaired")
                 break
@@ -195,21 +227,19 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     from dfs.pipeline import started_ids
     # Check the new file against what the site holds now: the run's own upload (assumed entered), or
     # a freshly downloaded entries file when one is given (its LOCKED marks are the site's truth).
-    eids = st["report"].get("entry_ids") or [e.entry_id for e in c.entries][:len(entry_lus)]
     held = {eid: [s.site_id for s in lu.slots] for eid, lu in zip(eids, entry_lus)}
     site = c.model_copy(update={"entries": [e.model_copy(update={"current": held.get(e.entry_id, e.current),
                                                                  "locked": [False] * len(e.current)})
                                             for e in c.entries]})
-    if entries_file:
-        from dfs.io.contest_file import load_contest
-        fresh = {e.entry_id: e for e in load_contest(entries_file).entries}
+    if fresh:
         site = c.model_copy(update={"entries": [fresh.get(e.entry_id, e) for e in c.entries]})
     path = write_upload(site, final_lus, run_dir / "upload_final.csv", only_changed=False,
-                        entry_ids=st["report"].get("entry_ids"), started_ids=started_ids(c, now))
+                        entry_ids=final_eids if eids else None, started_ids=started_ids(c, now))
     summary = {"now": now.isoformat(), "news": news, "out": sorted(out), "affected": sorted(affected),
                "out_but_locked": sorted(out & started_all), "news_failed": news_failed, "warnings": warnings,
                "news_checked": bool(web) and not news_failed,
-               "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired},
+               "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired,
+                           "reservations_left_empty": left_empty},
                "reforecast": sorted(refreshed), "locked": sorted(locked), "changed": change,
                "reason": ("a pick is out" if not current_ok else f"new lineup leads by {lead:.1%}" if change
                           else f"no change (best alternative leads by {lead:.1%} <= {threshold:.0%})"),
@@ -217,6 +247,21 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
                "llm": runner.summary()}
     (run_dir / "lastcall.json").write_text(json.dumps(summary, indent=1, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o)))
     return summary
+
+
+def _lineup_from_cells(c: Contest, cells: list[str | None]) -> Lineup | None:
+    """The lineup an entry holds on the site (site ids in slot order), or None if a cell is not in this contest."""
+    by_id: dict[str, list] = {}
+    for cd in c.candidates:
+        by_id.setdefault(cd.site_id, []).append(cd)
+    slots = []
+    for slot, sid in zip(c.rules.slots, cells):
+        cand = next((cd for cd in by_id.get(sid or "", []) if slot.name in cd.eligible_slots), None)
+        if cand is None:
+            return None
+        slots.append(LineupSlot(slot=slot.name, player_key=cand.player_key, site_id=sid, salary=cand.salary,
+                                points_multiplier=slot.points_multiplier))
+    return Lineup(slots=slots, label="held on the site", salary=sum(s.salary for s in slots))
 
 
 def kickoff_windows(run_dir: Path, lead_minutes: int = 60) -> list[dict[str, Any]]:

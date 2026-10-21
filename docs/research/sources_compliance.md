@@ -500,6 +500,7 @@ Registry (`config/sources.yaml`) shape, updated with the verified facts:
 3. **The Odds API.** Free credits per month (500?), whether props are on the free plan, event-endpoint cost, and terms.
 4. **CFBD site terms.** The quota of 1,000/month and the Patreon-only endpoints are now verified.
 5. **Upstream-derived data policy.** Does the user accept nflverse depth charts (ESPN upstream) and sportsdataverse ESPN sets, given the Disney ToU automation clause? Default: no for ESPN-derived, yes for the NFL-official injury and roster fields.
+   **Decided (2026-10-21, before merge; the owner deferred to the engineer):** accepted for personal, non-commercial use with no redistribution. The engine downloads only the public GitHub release files and never contacts ESPN itself. ESPN's own data APIs stay blocked in `dfs/sources.py`. College slates can run without these sets via `--provider generic`. Revisit before any commercial use or sharing of outputs built from them.
 6. **nflverse schedules/lines licence.** `nfldata` has no licence and the line provenance is undocumented. Is personal, no-redistribution use acceptable, or must lines come from The Odds API?
 7. NHL, MLB and NBA terms for personal automated use.
 8. **A free ALLOWED source for NFL game-day inactives.** None was found. Is web search inside the 60-minute budget enough?

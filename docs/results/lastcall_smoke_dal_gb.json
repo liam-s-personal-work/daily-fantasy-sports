@@ -1,0 +1,165 @@
+{
+ "now": "2026-10-18T19:30:00+00:00",
+ "news": {
+  "GB|matthew golden|WR": {
+   "player": "Matthew Golden",
+   "team": "GB",
+   "status": "active",
+   "text": "Not on the Packers' Week 6 inactives list (St-Juste, Burton, Banks, Jennings), per a search summary of packers.com. A Oct 16 RotoBaller preview lists him as a low-end WR1 with no injury. I did not open the inactives page myself.",
+   "source_url": "https://www.packers.com/news/packers-cowboys-week-6-inactives-oct-18-2026",
+   "as_of": "2026-10-18"
+  },
+  "DAL|ceedee lamb|WR": {
+   "player": "CeeDee Lamb",
+   "team": "DAL",
+   "status": "active",
+   "text": "Had a quad bruise but practiced fully Wed and Thu, and Rapoport said it isn't serious. He is not on Dallas' reported inactives (Overshown, Durant, Clark, Demercado, Shelton, Houston, Brown). Expect no limits. Ignore the 2025 ankle-sprain articles in the results, which are a different season.",
+   "source_url": "https://www.rotoballer.com/?p=1967259",
+   "as_of": "2026-10-15 (practice/status); inactives 2026-10-18"
+  },
+  "GB|jordan love|QB": {
+   "player": "Jordan Love",
+   "team": "GB",
+   "status": "active",
+   "text": "No 2026 injury news found, and he is not on the Packers' inactives list. The Love injury results were from earlier seasons.",
+   "source_url": "https://www.packers.com/news/packers-cowboys-week-6-inactives-oct-18-2026",
+   "as_of": "2026-10-18"
+  },
+  "DAL|george pickens|WR": {
+   "player": "George Pickens",
+   "team": "DAL",
+   "status": "active",
+   "text": "No injury designation found and he is not on Dallas' inactives. He is expected to be WR2 with Lamb healthy. He had 9 catches, 130 yards and a TD on 13 targets vs. Tampa Bay.",
+   "source_url": "https://www.thefantasyfootballers.com/news/642773/george-pickens-set-for-normal-duties-with-lamb-healthy/",
+   "as_of": "2026-10-18"
+  },
+  "GB|trey smack|K": {
+   "player": "Trey Smack",
+   "team": "GB",
+   "status": "no_news",
+   "text": "No news found on Smack. He is not among the Packers' reported inactives, so he is presumably active. I did not confirm this on the roster page.",
+   "source_url": "https://www.packers.com/news/packers-cowboys-week-6-inactives-oct-18-2026",
+   "as_of": "2026-10-18"
+  },
+  "GB|dst|DST": {
+   "player": "Packers",
+   "team": "GB",
+   "status": "no_news",
+   "text": "Defense: CB Brandon Cisse (hip, was questionable) is active, and DT Anthony Campbell returns from a three-game ankle absence. CB Benjamin St-Juste is inactive. Dallas' CB Joey Porter Jr. is also active.",
+   "source_url": "https://www.si.com/nfl/packers/onsi/packers-cowboys-inactives-four-starters-out-for-sunday-night",
+   "as_of": "2026-10-18"
+  }
+ },
+ "out": [],
+ "affected": [],
+ "reforecast": [],
+ "locked": [],
+ "changed": false,
+ "reason": "no change (best alternative leads by 0.0% <= 1%)",
+ "metric": "p_top",
+ "current": {
+  "optimal": 1.0,
+  "mean": 82.89961612300873,
+  "sd": 17.732876886012463,
+  "p10": 60.689630126953126,
+  "p50": 82.05830383300781,
+  "p90": 106.5159294128418,
+  "p_top": 0.1113,
+  "p_cash": 0.7557,
+  "p_top_se": 0.0031450327502269356,
+  "exp_pct": 69.20820000000009,
+  "sum_own": 273.99999999999983,
+  "log_own": -4.885588986830021,
+  "field_share": 0.0,
+  "rank": 1.0
+ },
+ "new": {
+  "optimal": 1.0,
+  "mean": 82.89961606941223,
+  "sd": 17.73287695247066,
+  "p10": 60.689630126953126,
+  "p50": 82.05830001831055,
+  "p90": 106.51593627929688,
+  "p_top": 0.1113,
+  "p_cash": 0.7557,
+  "p_top_se": 0.0031450327502269356,
+  "exp_pct": 69.20823333333374,
+  "sum_own": 273.99999999999983,
+  "log_own": -4.885588986830021,
+  "field_share": 0.0,
+  "rank": 1.0
+ },
+ "final": {
+  "slots": [
+   {
+    "slot": "CPT",
+    "player_key": "GB|matthew golden|WR",
+    "site_id": "44531557",
+    "salary": 12000,
+    "points_multiplier": 1.5
+   },
+   {
+    "slot": "FLEX",
+    "player_key": "DAL|ceedee lamb|WR",
+    "site_id": "44531495",
+    "salary": 10800,
+    "points_multiplier": 1.0
+   },
+   {
+    "slot": "FLEX",
+    "player_key": "GB|jordan love|QB",
+    "site_id": "44531498",
+    "salary": 9400,
+    "points_multiplier": 1.0
+   },
+   {
+    "slot": "FLEX",
+    "player_key": "DAL|george pickens|WR",
+    "site_id": "44531500",
+    "salary": 8800,
+    "points_multiplier": 1.0
+   },
+   {
+    "slot": "FLEX",
+    "player_key": "GB|trey smack|K",
+    "site_id": "44531511",
+    "salary": 4800,
+    "points_multiplier": 1.0
+   },
+   {
+    "slot": "FLEX",
+    "player_key": "GB|dst|DST",
+    "site_id": "44531514",
+    "salary": 4000,
+    "points_multiplier": 1.0
+   }
+  ],
+  "label": "final",
+  "salary": 49800,
+  "mean": 93.962,
+  "metrics": {
+   "optimal": 1.0,
+   "mean": 82.89961612300873,
+   "sd": 17.732876886012463,
+   "p10": 60.689630126953126,
+   "p50": 82.05830383300781,
+   "p90": 106.5159294128418,
+   "p_top": 0.1113,
+   "p_cash": 0.7557,
+   "p_top_se": 0.0031450327502269356,
+   "exp_pct": 69.20820000000009,
+   "sum_own": 273.99999999999983,
+   "log_own": -4.885588986830021,
+   "field_share": 0.0,
+   "rank": 1.0
+  }
+ },
+ "upload": "runs/smoke_web/dr-nfl-showdown-20261021-150207-c9076422/upload_final.csv",
+ "llm": {
+  "calls": 1,
+  "cached": 0,
+  "failed": 0,
+  "cost_usd": 0.0963,
+  "web_searches": 3
+ }
+}

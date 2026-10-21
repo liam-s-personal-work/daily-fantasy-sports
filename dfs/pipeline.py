@@ -313,6 +313,9 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     _save(run_dir, "forecasts.json", forecasts)
     learned = blend_mod.load_learned(cfg.learned_blend)
     calib = blend_mod.load_calibration(cfg.calibration) if cfg.calibration else {}
+    for name, path in (("blend weights", cfg.learned_blend), ("calibration", cfg.calibration)):
+        if path and not Path(path).exists():
+            log(f"WARNING: learned {name} file {path} not found (install with pip install -e); using the priors")
     season, week = ctx.season or cfg.season, ctx.week or cfg.week
     for name in ("blend weights", "calibration"):
         table = learned if name == "blend weights" else calib

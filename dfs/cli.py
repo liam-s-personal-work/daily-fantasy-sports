@@ -67,6 +67,9 @@ def _run(args) -> int:
     print(f"\nupload file: {res.upload_path}")
     if res.rules_upload_path:
         print(f"lineup with your rules: {res.rules_upload_path}")
+    elif args.rules:
+        err = res.report.get("decision", {}).get("user_rules_error", "unknown reason")
+        print(f"WARNING: no lineup with your rules: {err}")
     print(f"report: {res.run_dir / 'report.md'}")
     return 0
 
@@ -114,6 +117,9 @@ def _backtest(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["backtest"]:  # its options belong to dfs.backtest's own parser (argparse REMAINDER drops '--x')
+        return _backtest(argparse.Namespace(rest=argv[1:]))
     p = argparse.ArgumentParser(prog="dfs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -154,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("grade"); s.add_argument("run_dir"); s.add_argument("--standings")
     s.add_argument("--no-update", action="store_true"); s.set_defaults(fn=_grade)
 
-    s = sub.add_parser("backtest"); s.add_argument("rest", nargs=argparse.REMAINDER); s.set_defaults(fn=_backtest)
+    s = sub.add_parser("backtest", help="baseline accuracy on real games (options: dfs backtest --help)", add_help=False)
+    s.set_defaults(fn=_backtest)
 
     args = p.parse_args(argv)
     from dfs.io.contest_file import ContestFileError

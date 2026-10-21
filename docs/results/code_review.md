@@ -21,7 +21,7 @@
 - not a defect: 1
 - known limit: 1
 
-Tests: 324 offline tests pass after the fixes (`python -m pytest -q`).
+Tests: 334 offline tests pass after the fixes (`python -m pytest -q`).
 
 ## Contest files, rules and uploads
 

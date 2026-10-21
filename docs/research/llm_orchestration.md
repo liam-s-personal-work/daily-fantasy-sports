@@ -1,5 +1,7 @@
 # LLM agents for sports forecasting and a <60-minute, token-frugal Claude orchestration (VERIFIED EDITION)
 
+> Paths under `scratch/` refer to verification scripts and downloads from the research session; they are not in the repo.
+
 Research note for the DFS lineup engine (repo `liam-clifford/daily-fantasy-sports`, greenfield).
 Date: 2026-10-21. Key: `llm_orchestration`. This file replaces `llm_orchestration.md`. A skeptical
 reviewer re-checked every claim in it against primary sources.
@@ -12,7 +14,7 @@ reviewer re-checked every claim in it against primary sources.
 
 **Local copies.** I saved today's docs as Markdown (`<page>.md` on platform.claude.com and
 code.claude.com) under
-`/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/verify_llm/`.
+`scratch/verify_llm/`.
 The ForecastBench CSVs and wiki are in its `fb/` subfolder and the paper-repo READMEs in `gh/`.
 
 ## 0. Verification limits (read first)
@@ -931,7 +933,7 @@ Timing caveats:
 ### 4.10 Token and dollar budgets
 
 Computed with `calc/budget.py` (original) and `calc/budget_verified.py` (re-check) in
-`/tmp/claude-0/-home-user-daily-fantasy-sports/7b39a0e6-5812-5e7e-9a48-82f39febae8b/scratchpad/calc/`.
+`scratch/calc/`.
 - Prices are [VERIFIED: pricing page]. I re-ran the arithmetic and it reproduces.
 - Per-call token counts are **the author's estimates** (design). Replace them with measured `usage` after
   the first dry run.
