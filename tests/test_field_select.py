@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -131,6 +132,77 @@ def test_entropy_reweight_recovers_feasible_target():
     w, info = entropy_reweight(a, np.full(300, 1 / 300), target)
     assert w.sum() == pytest.approx(1.0) and (w >= 0).all()
     assert info["fit_max_abs_err_pct"] < 0.05 and info["converged"] == 1.0
+
+
+def test_entropy_reweight_unattainable_target_beats_no_reweighting():
+    """Regression: damped Newton crawled on targets the pool cannot reach and returned a
+    collapsed weight vector (ESS ~1) that fitted worse than the starting weights."""
+    rng = np.random.default_rng(0)
+    m, ridge = 150, 1e-4
+
+    def pool(n: int) -> np.ndarray:
+        pop = rng.dirichlet(np.full(m, 0.3))
+        a = np.zeros((n, m))
+        for i in range(n):
+            a[i, rng.choice(m, 9, replace=False, p=pop)] = 1.0
+        return a
+
+    a = pool(200)
+    target = pool(400).mean(axis=0)  # ownership of a field built from another public's view
+    w0 = np.full(200, 1 / 200)
+
+    def primal(w: np.ndarray) -> float:  # KL(w || w0) + ridge penalty: what the dual minimises
+        w = np.clip(w, 1e-300, None)
+        return float(np.sum(w * np.log(w / w0))) + 0.5 / ridge * float(np.sum((a.T @ w - target) ** 2))
+
+    w, info = entropy_reweight(a, w0, target, ridge=ridge)
+    assert info["converged"] == 1.0
+    assert primal(w) < 0.8 * primal(w0)
+    assert info["ess"] > 5
+
+
+def test_fit_ownership_full_table_far_from_pool(toy, field):
+    """Regression: a full ownership table (every player, zeros included) from a public that
+    disagrees with us left the old solver unconverged at 3.5 pct points mean error."""
+    contest, projs = toy
+    pub = point_values(projs)
+    rng = np.random.default_rng(3)
+    for k in rng.choice(sorted(pub), 40, replace=False):
+        pub[k] *= rng.choice([0.5, 1.6])
+    other = build_field(contest, projs, public_points=pub, noise=0.6 * field.noise, n_lineups=150, seed=9)
+    target = {k: other.own(k) for k in contest.players}
+    before = np.mean([abs(field.own(k) - v) for k, v in target.items()])
+    fitted = fit_ownership(field, contest, target)
+    assert fitted.stats["converged"] == 1.0
+    assert fitted.stats["fit_mean_abs_err_pct"] < 0.6 * before
+    assert fitted.stats["ess"] > 5
+    assert sum(fitted.ownership.values()) == pytest.approx(100.0 * contest.rules.roster_size)
+
+
+def test_small_pool_noise_is_capped(toy):
+    """Regression: on a showdown the 35% top-3 target is only reachable with near-random public
+    projections; calibration ran sigma to 1.5 and the mean-optimal lineup read P(cash) 0.97."""
+    contest, projs = toy
+    sd, sp = _showdown(contest, projs)
+    fm = build_field(sd, sp, seed=8)
+    assert fm.noise <= 0.5 and fm.stats["noise_capped"] == 1.0
+    assert fm.stats["top3_own_pct"] > 50  # a single-game field concentrates on its core players
+    keys, x = simulate(sp, sd.players, "nfl", n_sims=4000, seed=3)
+    m = evaluate([solve(sd, point_values(sp))], keys, x, fm)[0].metrics
+    assert m["p_cash"] < 0.95 and m["p_top"] < 0.2
+    big = build_field(contest, projs, n_lineups=60, seed=5)  # main-slate calibration is untouched by the cap
+    assert big.noise < 0.5 and big.stats["noise_capped"] == 0.0
+
+
+def test_non_finite_sims_raise_a_named_error(toy, field):
+    contest, projs = toy
+    lu = field.lineups[0]
+    k = lu.slots[3].player_key
+    bad = dict(projs)
+    bad[k] = projs[k].model_copy(update={"p90": float("nan")})
+    keys, x = simulate(bad, contest.players, "nfl", n_sims=500, seed=3)
+    with pytest.raises(ValueError, match=re.escape(k)):
+        score_against_field([lu], keys, x, field)
 
 
 def test_fit_ownership_matches_user_table(toy, field):

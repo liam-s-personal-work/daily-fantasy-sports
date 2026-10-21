@@ -100,13 +100,20 @@ def _id_crosswalk(players: pd.DataFrame, rosters: pd.DataFrame) -> pd.DataFrame:
 
 
 def offense_stat_line(df: pd.DataFrame) -> pd.DataFrame:
-    """nflverse weekly player stats -> dfs.scoring offense stat keys (one row per input row)."""
+    """nflverse weekly player stats -> dfs.scoring offense stat keys (one row per input row).
+
+    Fumbles lost use ``fumbles_lost_total`` when present: it adds fumbles lost on kick and punt
+    returns, which DK and FD also charge (reproduces their 2026 season averages for returners).
+    """
     g = lambda c: df[c].fillna(0).astype(float) if c in df.columns else pd.Series(0.0, index=df.index)
+    fumbles = g("sack_fumbles_lost") + g("rushing_fumbles_lost") + g("receiving_fumbles_lost")
+    if "fumbles_lost_total" in df.columns:
+        fumbles = np.maximum(fumbles, g("fumbles_lost_total"))
     return pd.DataFrame({
         "pass_yds": g("passing_yards"), "pass_td": g("passing_tds"), "int_thrown": g("passing_interceptions"),
         "rush_yds": g("rushing_yards"), "rush_td": g("rushing_tds"), "rec": g("receptions"),
         "rec_yds": g("receiving_yards"), "rec_td": g("receiving_tds"), "return_td": g("special_teams_tds"),
-        "fumble_lost": g("sack_fumbles_lost") + g("rushing_fumbles_lost") + g("receiving_fumbles_lost"),
+        "fumble_lost": fumbles,
         "two_pt": g("passing_2pt_conversions") + g("rushing_2pt_conversions") + g("receiving_2pt_conversions"),
         "off_fumble_rec_td": g("fumble_recovery_tds"),
     }, index=df.index)
@@ -157,6 +164,7 @@ class NFLData:
         ros["pos"] = ros["position"].map(POS_MAP)
         inj = inj.copy()
         inj["week"] = inj["week"].astype(int)
+        inj = nv.latest_injury_rows(inj)
         kg = ps.loc[ps["position"] == "K", ["player_id", "player_display_name", "season", "week", "team", "fg_made",
                                             "fg_made_list", "pat_made"]].rename(
             columns={"player_id": "gsis_id", "player_display_name": "name"})
@@ -174,8 +182,27 @@ class NFLData:
         if d is None or d.empty:
             return pd.DataFrame(columns=["team", "gsis_id", "pos", "rank", "player_name"])
         if "dt" in d.columns and d["dt"].notna().any():
-            return nv.depth_chart_asof(season, as_of=as_of, depth=d[d["dt"].notna()])
+            key = ("depth_index", season)
+            if key not in self.cache:
+                self.cache[key] = nv.DepthSnapshots(d)
+            return self.cache[key].asof(season, as_of)
         return nv.depth_chart_asof(season, week=week, depth=d)
+
+    def depth_ranks(self, rows: pd.DataFrame) -> np.ndarray:
+        """Pre-game depth-chart rank (9 = not listed) of each (season, week, team, gsis_id, pos) row,
+        from the chart known at 08:00 ET on the team's game day (the rule ``build_context`` uses)."""
+        tg = self.team_games[["season", "week", "team", "gameday"]].drop_duplicates(["season", "week", "team"])
+        r = rows[["season", "week", "team", "gsis_id", "pos"]].reset_index(drop=True).merge(
+            tg, on=["season", "week", "team"], how="left")
+        charts = []
+        for (s, w, gd), _ in r.dropna(subset=["gameday"]).groupby(["season", "week", "gameday"]):
+            dc = self.depth_chart(int(s), int(w), nv.kickoff_utc(gd, "08:00"))
+            charts.append(dc[["team", "gsis_id", "pos", "rank"]].assign(season=s, week=w, gameday=gd))
+        if not charts:
+            return np.full(len(r), 9.0)
+        dc = pd.concat(charts, ignore_index=True).drop_duplicates(["season", "week", "gameday", "team", "gsis_id", "pos"])
+        r = r.merge(dc, on=["season", "week", "gameday", "team", "gsis_id", "pos"], how="left")
+        return r["rank"].astype(float).fillna(9.0).to_numpy()
 
 
 def _merge_team_stats(tg: pd.DataFrame, ts: pd.DataFrame, ps: pd.DataFrame) -> pd.DataFrame:
@@ -236,7 +263,9 @@ def _player_games(ps: pd.DataFrame, snaps: pd.DataFrame, ros: pd.DataFrame, ffo:
                "sacks_suffered", "carries", "rushing_yards", "rushing_tds", "receptions", "targets", "receiving_yards",
                "receiving_tds", "special_teams_tds", "fumble_recovery_tds", "sack_fumbles_lost", "rushing_fumbles_lost",
                "receiving_fumbles_lost", "passing_2pt_conversions", "rushing_2pt_conversions",
-               "receiving_2pt_conversions", "fantasy_points_ppr"]].rename(columns={"player_id": "gsis_id"})
+               "receiving_2pt_conversions", "fantasy_points_ppr"]
+              + (["fumbles_lost_total"] if "fumbles_lost_total" in ps.columns else [])].rename(
+        columns={"player_id": "gsis_id"})
     involved = (stat[["attempts", "carries", "targets"]].fillna(0).sum(axis=1) > 0) | stat["position"].isin(
         ["QB", "RB", "FB", "WR", "TE"])
     stat = stat[involved]
@@ -295,7 +324,7 @@ def _player_games(ps: pd.DataFrame, snaps: pd.DataFrame, ros: pd.DataFrame, ffo:
             "passing_2pt_conversions", "sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost",
             "rushing_2pt_conversions", "receiving_2pt_conversions", "fantasy_points_ppr", "team_targets",
             "team_carries", "team_attempts", "team_x_rec_td", "team_x_rush_td", "team_rec_td", "team_rush_td",
-            "has_ffo"] + list(fcols.values())
+            "has_ffo"] + list(fcols.values()) + (["fumbles_lost_total"] if "fumbles_lost_total" in pg.columns else [])
     return pg[keep].sort_values(["season", "week", "team", "gsis_id"]).reset_index(drop=True)
 
 
@@ -520,26 +549,54 @@ def recent_roles(rows: pd.DataFrame, data: "NFLData") -> pd.Series:
     return pd.Series(role, index=r["_i"].to_numpy()).sort_index().set_axis(rows.index)
 
 
+STARTER_SLOTS = {"QB": 1, "RB": 1, "WR": 3, "TE": 1}
+BACKUP_SLOTS = {"QB": 2, "RB": 3, "WR": 5, "TE": 2}
+
+
+def depth_bucket(pos, rank) -> np.ndarray:
+    """'starter' / 'backup' / 'other' from a pre-game depth-chart rank (9 = not listed)."""
+    pos = np.asarray(pos, dtype=object)
+    r = np.asarray(rank, dtype=float)
+    s = np.array([STARTER_SLOTS.get(p, 1) for p in pos], dtype=float)
+    b = np.array([BACKUP_SLOTS.get(p, 2) for p in pos], dtype=float)
+    return np.where(r <= s, "starter", np.where(r <= b, "backup", "other"))
+
+
 class AvailabilityModel:
-    """P(logs an offensive snap | on the roster) by (position, report, practice, role), estimated
-    from history and smoothed toward (position, report, role), (report, role) and (report,)."""
+    """P(logs an offensive snap | on the roster) by (position, report, practice, role, depth), estimated
+    from history and smoothed toward (position, report, role, depth), (position, report, role),
+    (report, role) and (report,).
+
+    ``depth`` is the pre-game depth-chart bucket: recent snaps alone put a healthy starter who
+    missed the end of last season, or one back from IR, in the deep-backup cell (role 'none').
+    ``target='active'`` estimates P(dressed: game-day status ACT) instead, the availability a QB
+    needs to start; a backup QB is almost always active but rarely logs a snap.
+    """
 
     def __init__(self, table: dict[tuple, float], counts: dict[tuple, int]):
         self.table, self.counts = table, counts
 
     @classmethod
-    def fit(cls, data: "NFLData", season: int, week: int, n_seasons: int = 4, m: float = 25.0) -> "AvailabilityModel":
+    def fit(cls, data: "NFLData", season: int, week: int, n_seasons: int = 4, m: float = 25.0,
+            target: str = "played") -> "AvailabilityModel":
         ros = data.rosters
         k = nv.week_key(ros["season"], ros["week"])
         mask = (k < nv.week_key(season, week)) & (ros["season"] >= season - n_seasons) & ros["pos"].isin(OFF_POS)
         mask &= ros["status"].isin(["ACT", "INA"]) & (ros["game_type"] == "REG")
-        r = ros.loc[mask, ["season", "week", "gsis_id", "team", "pos"]].drop_duplicates(["season", "week", "gsis_id"])
+        r = ros.loc[mask, ["season", "week", "gsis_id", "team", "pos", "status"]].drop_duplicates(
+            ["season", "week", "gsis_id"])
         r["wk"] = nv.week_key(r["season"], r["week"])
-        pg = data.player_games
-        pl = pg.loc[pg["offense_pct"].fillna(1.0) > 0, ["gsis_id", "wk"]].drop_duplicates().assign(played=1.0)
-        r = r.merge(pl, on=["gsis_id", "wk"], how="left")
-        r["played"] = r["played"].fillna(0.0)
+        if target == "active":
+            r["played"] = (r["status"] == "ACT").astype(float)
+        elif target == "played":
+            pg = data.player_games
+            pl = pg.loc[pg["offense_pct"].fillna(1.0) > 0, ["gsis_id", "wk"]].drop_duplicates().assign(played=1.0)
+            r = r.merge(pl, on=["gsis_id", "wk"], how="left")
+            r["played"] = r["played"].fillna(0.0)
+        else:
+            raise ValueError(f"unknown availability target {target!r}")
         r["role"] = recent_roles(r, data)
+        r["dc"] = depth_bucket(r["pos"], data.depth_ranks(r))
         inj = data.injuries[["season", "week", "gsis_id", "report_status", "practice_status"]].drop_duplicates(
             ["season", "week", "gsis_id"])
         r = r.merge(inj, on=["season", "week", "gsis_id"], how="left")
@@ -560,10 +617,18 @@ class AvailabilityModel:
         for (pos, rep, prac, role), g in r.groupby(["pos", "rep", "prac", "role"]):
             table[(pos, rep, prac, role)] = (g["played"].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
             counts[(pos, rep, prac, role)] = len(g)
+        for (pos, rep, role, dc), g in r.groupby(["pos", "rep", "role", "dc"]):
+            table[("dc", pos, rep, role, dc)] = (g["played"].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
+            counts[("dc", pos, rep, role, dc)] = len(g)
+        for (pos, rep, prac, role, dc), g in r.groupby(["pos", "rep", "prac", "role", "dc"]):
+            key = ("dc", pos, rep, prac, role, dc)
+            table[key] = (g["played"].sum() + m * table[("dc", pos, rep, role, dc)]) / (len(g) + m)
+            counts[key] = len(g)
         return cls(table, counts)
 
-    def prob(self, pos: str, rep: str, prac: str, role: str) -> float:
-        for key in ((pos, rep, prac, role), (pos, rep, role), (rep, role), (rep,)):
+    def prob(self, pos: str, rep: str, prac: str, role: str, dc: str | None = None) -> float:
+        keys = [("dc", pos, rep, prac, role, dc), ("dc", pos, rep, role, dc)] if dc is not None else []
+        for key in (*keys, (pos, rep, prac, role), (pos, rep, role), (rep, role), (rep,)):
             if key in self.table:
                 return float(self.table[key])
         return 0.9

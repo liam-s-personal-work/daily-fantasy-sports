@@ -332,10 +332,19 @@ def test_fit_tables_shapes():
     disp = model.fit_dispersion(rows)
     for pos in ("QB", "RB", "WR", "TE"):
         assert disp[pos]["b"] == pytest.approx(0.4, abs=0.12) and 0.05 < disp[pos]["fit_below_p10"] < 0.15
-    pzr = pd.DataFrame({"pos": "WR", "appeared_last": rng.random(1000) > 0.3, "exp_opps": rng.uniform(0, 15, 1000),
-                        "played": rng.random(1000) > 0.2})
-    pz = model.fit_pzero(pzr)
-    assert set(pz["WR"]) == {"last", "missed_last"} and len(pz["WR"]["last"]) == len(model.OPP_BUCKETS) - 1
+    # logistic p_zero recovers known coefficients from simulated availability
+    n = 20000
+    pzr = pd.DataFrame({"pos": "WR", "appeared_last": rng.random(n) > 0.2, "exp_opps": rng.uniform(0, 15, n),
+                        "depth": rng.integers(1, 6, n)})
+    true = np.array([0.5, 1.5, -0.8, -0.7, -0.3, 0.05, -0.2])
+    X = model.pz_design(pzr)
+    pzr["played"] = rng.random(n) >= 1 / (1 + np.exp(-(X @ true)))
+    pz = model.fit_pzero(pzr, l2=0.0)
+    p_true = 1 / (1 + np.exp(-(X @ true)))
+    p_fit = model.p_zero_from(pzr, pz)
+    assert np.abs(p_fit - p_true).mean() < 0.01  # probabilities recovered (coefficients of collinear terms trade off)
+    assert pz["WR"]["mean_pred"] == pytest.approx(pz["WR"]["absent_rate"], abs=1e-3)
+    assert pz["QB"] == model.DEFAULT_PZERO["QB"]  # too few rows -> defaults
 
 
 # --------------------------------------------------------------------------- team matching
@@ -463,6 +472,20 @@ def test_provider_falls_back_when_slate_unmatched_or_no_history():
     assert any("NO TEAM HISTORY" in n for n in ctx1.notes)
 
 
+def test_provider_user_lines_drive_environment():
+    from dfs.projections.cfb_provider import CFBProvider
+
+    d = synthetic_data(line_week5=False)
+    p = Player(key="HOM|rb one|RB", name="Rb One", team="HOM", opponent="AWY", positions=["RB"], game="AWY@HOM",
+               start_time=pd.Timestamp("2026-10-10T19:00:00Z").to_pydatetime())
+    base = CFBProvider(season=2026, data=d).prepare(_cfb_contest([p]))
+    lined = CFBProvider(season=2026, data=d, lines={"AWY@HOM": {"home_spread": -21.0, "total": 70.0}}).prepare(_cfb_contest([p]))
+    assert "no pre-game line" in base.market["AWY@HOM"] and "[user]" in lined.market["AWY@HOM"]
+    assert lined.baseline[p.key].components["env"] > 1.0 == base.baseline[p.key].components["env"]
+    assert lined.baseline[p.key].mean > base.baseline[p.key].mean
+    assert d.team_games["implied"].isna().all()  # the injected data object was not modified
+
+
 def test_pipeline_uses_cfb_provider():
     from dfs.pipeline import RunConfig, provider_for
     from dfs.projections.cfb_provider import CFBProvider
@@ -491,12 +514,13 @@ def test_real_stat_lines_match_official_box(real_data):
 
 @pytest.mark.network
 def test_real_stat_lines_match_season_aggregates(real_data):
-    lines = real_data.lines[(real_data.lines["season"] == 2026) & (real_data.lines["stat_source"] == "pbp")]
+    lines = real_data.raw_lines[real_data.raw_lines["season"] == 2026]  # pre-repair, like the aggregate files
     rep = cs.validate_against_aggregates(lines, cfbdata.load_season("passing", 2026), cfbdata.load_season("rushing", 2026),
                                          cfbdata.load_season("receiving", 2026), cfbdata.load_season("schedules", 2026))
     for group in ("passing", "rushing", "receiving"):
         for stat, r in rep[group]["stats"].items():
             assert abs(r["total_diff_pct"]) < 3.0, (group, stat, r)
+    assert rep["receiving"]["stats"]["targets"]["player_within_2pct"] > 0.85
 
 
 @pytest.mark.network

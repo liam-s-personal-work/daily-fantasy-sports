@@ -20,6 +20,7 @@ no line unless one is passed in (``lines={"AWAY@HOME": {"home_spread": -7.5, "to
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -120,8 +121,9 @@ class CFBProvider:
         for w in cfbdata.LOAD_WARNINGS:
             notes.append(w)
 
-        # optional user-supplied lines for the target week
+        # optional user-supplied lines for the target week (applied to a copy: injected data stays untouched)
         if self.lines:
+            data = dataclasses.replace(data, team_games=data.team_games.copy(), cache={})
             self._apply_lines(data, rep, season, week, notes)
 
         # 2. players

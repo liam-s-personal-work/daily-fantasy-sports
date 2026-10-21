@@ -196,6 +196,16 @@ def week_schedule(season: int, week: int, schedules: pd.DataFrame | None = None)
     return s.drop(columns=[c for c in ("away_score", "home_score", "result", "total", "overtime") if c in s.columns])
 
 
+def latest_injury_rows(inj: pd.DataFrame) -> pd.DataFrame:
+    """One row per (season, week, gsis_id): the latest report by ``date_modified`` (a player can be
+    listed twice, e.g. Questionable on Saturday and Out on Sunday)."""
+    if inj.empty or not {"season", "week", "gsis_id"} <= set(inj.columns):
+        return inj
+    if "date_modified" in inj.columns:
+        inj = inj.sort_values("date_modified", kind="stable", na_position="first")
+    return inj.drop_duplicates(["season", "week", "gsis_id"], keep="last")
+
+
 def week_injuries(season: int, week: int, injuries: pd.DataFrame | None = None) -> pd.DataFrame:
     """The target week's final injury report rows (report_status, practice_status by gsis_id)."""
     inj = injuries if injuries is not None else load("injuries", [season])
@@ -232,9 +242,7 @@ def depth_chart_asof(season: int, as_of: datetime | str | None = None, week: int
     if "dt" in d.columns:
         dt = pd.to_datetime(d["dt"], utc=True)
         if as_of is not None:
-            cutoff = pd.Timestamp(as_of)
-            cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
-            d = d.loc[dt < cutoff]
+            d = d.loc[dt < _utc(as_of)]
             dt = dt.loc[d.index]
         if d.empty:
             return pd.DataFrame(columns=["team", "gsis_id", "pos", "rank", "player_name"])
@@ -257,6 +265,34 @@ def depth_chart_asof(season: int, as_of: datetime | str | None = None, week: int
     out = out.sort_values(["team", "pos", "raw_rank"]).drop_duplicates(["team", "pos", "gsis_id"])
     out["rank"] = out.groupby(["team", "pos"]).cumcount() + 1
     return out.drop(columns="raw_rank").reset_index(drop=True)
+
+
+def _utc(t) -> pd.Timestamp:
+    t = pd.Timestamp(t)
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+
+
+class DepthSnapshots:
+    """Repeated ``depth_chart_asof`` lookups on one season of timestamped snapshots.
+
+    Indexes rows by (team, snapshot time) once, so each lookup touches only the selected
+    snapshot instead of filtering the whole season (identical output).
+    """
+
+    def __init__(self, depth: pd.DataFrame):
+        d = depth[depth["dt"].notna()].reset_index(drop=True)
+        keys = pd.DataFrame({"team": d["team"], "dt": pd.to_datetime(d["dt"], utc=True)})
+        self.depth = d
+        self.rows = keys.groupby(["team", "dt"], sort=False).indices
+        self.snaps = keys.drop_duplicates().reset_index(drop=True)
+
+    def asof(self, season: int, as_of: datetime | str | None) -> pd.DataFrame:
+        s = self.snaps if as_of is None else self.snaps[self.snaps["dt"] < _utc(as_of)]
+        if s.empty:
+            return depth_chart_asof(season, as_of=None, depth=self.depth.iloc[:0])
+        last = s.loc[s.groupby("team")["dt"].idxmax()]
+        idx = np.sort(np.concatenate([self.rows[(t, v)] for t, v in zip(last["team"], last["dt"])]))
+        return depth_chart_asof(season, as_of=None, depth=self.depth.iloc[idx])
 
 
 def kickoff_utc(gameday: str, gametime: str | None) -> pd.Timestamp:

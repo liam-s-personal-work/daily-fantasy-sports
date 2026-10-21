@@ -5,22 +5,26 @@ For a target (season, week), using only games strictly before that week:
 1. Base rate. Season-to-date fantasy points per game played (scored with ``dfs.scoring`` for the
    contest's table), shrunk toward (a) last season's points per game (each prior game counts
    ``w_prev`` of a current one) and (b) a role prior: the position's points per unit of usage
-   share times the player's season share.
+   share times the player's season share (``k0`` pseudo games).
 2. Workload. The player's share of team opportunities (QB: dropbacks; RB: carries + targets;
-   WR/TE: targets, against team pass attempts) over the team's last ``recent_games`` games, shrunk
-   toward his season share with ``k_recent`` pseudo team-opportunities. Points scale by
-   (recent / season share) ** ``alpha`` (clipped).
+   WR/TE: targets, against team pass attempts), counted on non-garbage-time snaps
+   (``usage_basis``), over the last ``recent_games`` team games he played, shrunk toward his
+   season share with ``k_recent`` pseudo team-opportunities. Points scale by
+   (recent / season share) ** ``alpha`` when the share rose and ** ``alpha_down`` when it fell
+   (falls are noisier), clipped.
 3. Game environment, when a line exists: (team implied points / team season scoring average,
-   shrunk toward the league) ** ``beta`` (clipped).
+   shrunk toward the league) ** ``beta`` (clipped). A per-position ``scale`` calibrates the mean.
 4. Availability. Players with no recorded offensive play in the team's last ``recent_games``
-   games are removed ("no recent role"). ``p_zero`` (no recorded stat in the game) comes from
-   empirical rates by position, by whether the player appeared in the team's latest game (a
-   role that vanished last week usually means injury), and by expected volume.
+   games are removed ("no recent role"). ``p_zero`` (no recorded stat in the game) is a
+   per-position logistic on: missed the team's latest game (a role that vanished last week),
+   expected opportunities, and depth rank in the team's position group.
 5. Spread. Played-outcome SD = ``a + b * mean`` by position (fit on residuals of past
    projections), turned into p10/p50/p90 with ``quantiles_from_mean_sd`` and a fitted skew.
+   ``mean`` = (1 - p_zero) * played mean.
 
 Defaults (``CFBParams``, ``DEFAULT_DISPERSION``, ``DEFAULT_PZERO``) were fit on 2025 weeks 3-13
 with 2024 as the prior season (``python -m dfs.backtest_cfb --fit``); 2026 is out of sample.
+Results: ``docs/results/cfb_baseline_backtest.md``.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ POSITIONS = ("QB", "RB", "WR", "TE")
 # losses) and DK/FD score from official stats; set False to score rushing without sack yards.
 SACKS_IN_RUSHING = True
 ROSTER_POS = {"QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB", "WR": "WR", "SB": "WR", "TE": "TE"}
-DERIVED_VERSION = "cfb-lines-v3"
+DERIVED_VERSION = "cfb-lines-v4"
 
 
 # --------------------------------------------------------------------------- parameters
@@ -51,16 +55,18 @@ DERIVED_VERSION = "cfb-lines-v3"
 
 @dataclass(frozen=True)
 class CFBParams:
+    """Defaults fit on 2025 weeks 3-13 (prior season 2024) by ``python -m dfs.backtest_cfb --fit``."""
+
     recent_games: int = 2
-    k_recent: float = 20.0  # pseudo team-opportunities pulling the recent share to the season share
-    alpha: float = 0.8  # elasticity of points to the workload ratio when the recent share is up
-    alpha_down: float = 0.8  # ... and when it is down (down-moves are noisier: blowouts, one-off game plans)
+    k_recent: float = 80.0  # pseudo team-opportunities pulling the recent share to the season share
+    alpha: float = 0.5  # elasticity of points to the workload ratio when the recent share is up
+    alpha_down: float = 0.25  # ... and when it is down (down-moves are noisier: blowouts, one-off game plans)
     ratio_lo: float = 0.3
     ratio_hi: float = 2.5
-    k0: float = 1.0  # pseudo games of the role prior
+    k0: float = 2.0  # pseudo games of the role prior
     w_prev: float = 0.2  # weight of one prior-season game relative to a current-season game
     cap_prev: int = 12
-    beta: float = 0.7  # elasticity to implied points vs the team's (shrunk) season scoring
+    beta: float = 0.5  # elasticity to implied points vs the team's (shrunk) season scoring
     k_team: float = 3.0  # pseudo games pulling a team's scoring average to the league's
     env_lo: float = 0.6
     env_hi: float = 1.6
@@ -69,22 +75,29 @@ class CFBParams:
     recent_mode: str = "played"
     # "competitive": shares from non-garbage-time snaps only (CFB blowouts distort shares); "all": every snap
     usage_basis: str = "competitive"
-    # per-position multiplier on the played mean, fit on the fit season (sum actual / sum projected)
-    scale: Mapping[str, float] = field(default_factory=lambda: {"QB": 1.0, "RB": 1.0, "WR": 1.0, "TE": 1.0})
+    # per-position multiplier on the played mean (sum actual / sum projected on the fit season's dfs pool)
+    scale: Mapping[str, float] = field(default_factory=lambda: {"QB": 1.0421, "RB": 1.0149, "WR": 0.975, "TE": 0.9496})
 
     def with_(self, **kw) -> "CFBParams":
         return replace(self, **kw)
 
 
-# Played-outcome SD = a + b * mean_played, and the two-piece skew, by position (see module doc).
+# Played-outcome SD = a + b * mean_played, and the two-piece skew, by position (fit on 2025 residuals).
 DEFAULT_DISPERSION: dict[str, dict[str, float]] = {
-    "QB": {"a": 4.0, "b": 0.33, "skew": 0.15}, "RB": {"a": 2.5, "b": 0.45, "skew": 0.45},
-    "WR": {"a": 2.0, "b": 0.5, "skew": 0.5}, "TE": {"a": 1.5, "b": 0.55, "skew": 0.55},
+    "QB": {"a": 6.217, "b": 0.216, "skew": 0.3},
+    "RB": {"a": 3.457, "b": 0.43, "skew": 0.6},
+    "WR": {"a": 2.523, "b": 0.534, "skew": 0.45},
+    "TE": {"a": 1.921, "b": 0.548, "skew": 0.6},
 }
-# P(no recorded stat) by position x appeared-in-team's-last-game x expected-opportunity bucket.
-OPP_BUCKETS = [0.0, 1.0, 3.0, 6.0, 12.0, np.inf]
+# P(no recorded stat in the game): logistic by position on PZ_FEATURES, where x = log1p(expected
+# opportunities this game), missed = no recorded play in the team's latest game, and depth ranks the
+# player within his team's QB / RB / WR+TE group by recent usage share (all pre-game). Fit on 2025.
+PZ_FEATURES = ("intercept", "missed_last", "x", "depth1", "depth2", "x^2", "missed_last*x")
 DEFAULT_PZERO: dict[str, dict[str, list[float]]] = {
-    pos: {"last": [0.45, 0.25, 0.12, 0.06, 0.04], "missed_last": [0.8, 0.65, 0.5, 0.4, 0.35]} for pos in POSITIONS
+    "QB": {"coef": [0.7823, 0.5656, -0.2282, -1.52, -0.5534, -0.0802, 0.4527]},
+    "RB": {"coef": [1.3253, 0.1533, -1.6751, 0.1198, -0.1691, 0.0216, 1.0987]},
+    "WR": {"coef": [1.6097, 0.2341, -2.7083, -0.7125, -0.4775, 0.2725, 0.9722]},
+    "TE": {"coef": [1.3827, 0.1291, -1.8738, -0.1438, -0.0192, -0.2723, 0.6393]},
 }
 
 
@@ -105,13 +118,14 @@ class CFBData:
     teams: pd.DataFrame
     schedules: pd.DataFrame
     validation: dict = field(default_factory=dict)
+    raw_lines: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)  # pbp lines before the box repair
     cache: dict = field(default_factory=dict, repr=False)
 
     @classmethod
     def load(cls, seasons: Iterable[int], max_age_hours: float | None = None, use_derived_cache: bool = True,
              log=None) -> "CFBData":
         seasons = sorted(set(int(s) for s in seasons))
-        L, T, R, TB, PB, SCH, BET, TEAMS, VAL = [], [], [], [], [], [], [], [], {}
+        L, T, R, TB, PB, SCH, BET, TEAMS, VAL, RAW = [], [], [], [], [], [], [], [], {}, []
         pbp_lines = []
         for s in seasons:
             sched = cfbdata.load_season("schedules", s, max_age_hours)
@@ -120,8 +134,10 @@ class CFBData:
             box_raw = cfbdata.load("player_box", [s], max_age_hours, optional=True)
             tbox = cfbdata.load("team_box", [s], max_age_hours, optional=True)
             bet = cfbdata.load("betting", [s], max_age_hours, optional=True)
-            lines, tt, flagged, val, lines_src = _season_lines(s, ros, box_raw, tbox, max_age_hours, use_derived_cache, log)
+            lines, tt, flagged, val, lines_src, raw = _season_lines(s, ros, box_raw, tbox, max_age_hours,
+                                                                    use_derived_cache, log)
             pbp_lines.append(lines_src)
+            RAW.append(raw)
             L.append(lines); T.append(tt); R.append(ros); SCH.append(sched); BET.append(bet); TEAMS.append(teams)
             VAL[s] = val
         sched = pd.concat(SCH, ignore_index=True)
@@ -130,8 +146,11 @@ class CFBData:
         gl = cfbdata.game_lines(bet, pl)
         rosters = pd.concat([r for r in R if len(r)], ignore_index=True) if any(len(r) for r in R) else pd.DataFrame()
         teams = pd.concat([t for t in TEAMS if len(t)], ignore_index=True) if any(len(t) for t in TEAMS) else pd.DataFrame()
-        return cls.build(seasons, pd.concat(L, ignore_index=True), pd.concat(T, ignore_index=True), sched, gl,
-                         rosters, teams, VAL)
+        out = cls.build(seasons, pd.concat(L, ignore_index=True), pd.concat(T, ignore_index=True), sched, gl,
+                        rosters, teams, VAL)
+        out.raw_lines = pd.concat([r for r in RAW if r is not None and len(r)], ignore_index=True) \
+            if any(r is not None and len(r) for r in RAW) else pd.DataFrame()
+        return out
 
     @classmethod
     def build(cls, seasons, lines, team_totals, schedules, game_lines, rosters, teams, validation=None) -> "CFBData":
@@ -170,12 +189,14 @@ def _season_lines(season, rosters, box_raw, team_box, max_age_hours, use_cache, 
                      [cfbdata.cache_path(n, season) for n in ("pbp", "rosters", "player_box", "team_box")] if p.exists())
     h = hashlib.sha256(f"{DERIVED_VERSION}|{stamp}".encode()).hexdigest()[:12]
     d = cfbdata.CACHE_DIR / "derived"
-    f_lines, f_tt, f_meta, f_pl = (d / f"lines_{season}_{h}.parquet", d / f"team_totals_{season}_{h}.parquet",
-                                   d / f"meta_{season}_{h}.json", d / f"pbp_lines_{season}_{h}.parquet")
-    if use_cache and f_lines.exists() and f_tt.exists() and f_meta.exists():
+    f_lines, f_tt, f_meta, f_pl, f_raw = (d / f"lines_{season}_{h}.parquet", d / f"team_totals_{season}_{h}.parquet",
+                                          d / f"meta_{season}_{h}.json", d / f"pbp_lines_{season}_{h}.parquet",
+                                          d / f"raw_lines_{season}_{h}.parquet")
+    if use_cache and f_lines.exists() and f_tt.exists() and f_meta.exists() and f_raw.exists():
         meta = json.loads(f_meta.read_text())
         pl = pd.read_parquet(f_pl) if f_pl.exists() else None
-        return pd.read_parquet(f_lines), pd.read_parquet(f_tt), pd.DataFrame(meta.get("flagged", [])), meta.get("validation", {}), pl
+        return (pd.read_parquet(f_lines), pd.read_parquet(f_tt), pd.DataFrame(meta.get("flagged", [])),
+                meta.get("validation", {}), pl, pd.read_parquet(f_raw))
     if log:
         log(f"cfb: building {season} stat lines from play-by-play")
     pbp = cfbdata.load_season("pbp", season, max_age_hours)
@@ -195,11 +216,12 @@ def _season_lines(season, rosters, box_raw, team_box, max_age_hours, use_cache, 
         if h not in old.name:
             old.unlink(missing_ok=True)
     fixed.to_parquet(f_lines, index=False)
+    lines.to_parquet(f_raw, index=False)
     tt.to_parquet(f_tt, index=False)
     if pl is not None:
         pl.to_parquet(f_pl, index=False)
     f_meta.write_text(json.dumps({"flagged": flagged.to_dict("records"), "validation": val}, default=float))
-    return fixed, tt, flagged, val, pl
+    return fixed, tt, flagged, val, pl, lines
 
 
 def team_games_frame(schedules: pd.DataFrame, game_lines: pd.DataFrame | None) -> pd.DataFrame:
@@ -350,6 +372,14 @@ def features(data: CFBData, season: int, week: int, table_id: str, params: CFBPa
                             / (denom.fillna(0) + params.k_recent))
     feat["recent_share_raw"] = (feat["recent_opps"] / feat["recent_team_opps"].replace(0, np.nan)).fillna(0.0)
 
+    # depth: rank within the team's QB / RB / WR+TE group by recent usage (players with a recent role)
+    grp = np.where(feat["pos"].isin(["WR", "TE"]), "WRTE", feat["pos"])
+    act = feat["appeared_recent"].astype(bool)
+    order = feat.assign(_g=grp, _a=act).sort_values(["team_id", "_g", "_a", "recent_share_raw", "season_share"],
+                                                     ascending=[True, True, False, False, False])
+    order["_d"] = order.groupby(["team_id", "_g"]).cumcount() + 1
+    feat["depth"] = order["_d"].where(order["_a"]).reindex(feat.index)
+
     # prior season (any team)
     if len(prev):
         gp = prev.groupby("athlete_id")["fp"]
@@ -440,13 +470,7 @@ def project(feat: pd.DataFrame, slope: Mapping[str, float], params: CFBParams | 
     scale = f["pos"].map(lambda p: params.scale.get(p, 1.0))
     f["mean_played"] = np.maximum(f["base"] * f["workload"] * f["env"] * scale, 0.0)
     # availability
-    bucket = np.clip(np.searchsorted(OPP_BUCKETS, f["exp_opps"].fillna(0).to_numpy(), side="right") - 1, 0,
-                     len(OPP_BUCKETS) - 2)
-    pz = []
-    for pos, last, b in zip(f["pos"], f["appeared_last"], bucket):
-        tab = pzero.get(pos, pzero.get("WR"))
-        pz.append(tab["last" if last else "missed_last"][int(b)])
-    f["p_zero"] = np.clip(pz, 0.0, 0.97)
+    f["p_zero"] = p_zero_from(f, pzero)
     f["mean"] = (1 - f["p_zero"]) * f["mean_played"]
     # spread
     q = [quantiles_from_mean_sd(m, dispersion.get(p, dispersion["WR"])["a"] + dispersion.get(p, dispersion["WR"])["b"] * m,
@@ -456,6 +480,26 @@ def project(feat: pd.DataFrame, slope: Mapping[str, float], params: CFBParams | 
     f["sd"] = [dispersion.get(p, dispersion["WR"])["a"] + dispersion.get(p, dispersion["WR"])["b"] * m
                for m, p in zip(f["mean_played"], f["pos"])]
     return f
+
+
+def pz_design(f: pd.DataFrame) -> np.ndarray:
+    missed = (~f["appeared_last"].astype(bool)).astype(float).to_numpy()
+    lx = np.log1p(f["exp_opps"].fillna(0.0).clip(lower=0.0).to_numpy(float))
+    depth = f["depth"].fillna(99).to_numpy(float) if "depth" in f.columns else np.full(len(f), 99.0)
+    return np.column_stack([np.ones(len(f)), missed, lx, depth == 1, depth == 2, lx ** 2, missed * lx]).astype(float)
+
+
+def p_zero_from(f: pd.DataFrame, pzero: Mapping[str, Mapping[str, list[float]]] | None = None) -> np.ndarray:
+    """P(no recorded stat) per row from the per-position logistic coefficients."""
+    pzero = pzero or DEFAULT_PZERO
+    X = pz_design(f)
+    out = np.zeros(len(f))
+    pos = f["pos"].to_numpy()
+    for p in np.unique(pos):
+        coef = np.asarray(pzero.get(p, pzero.get("WR"))["coef"], dtype=float)
+        idx = pos == p
+        out[idx] = 1.0 / (1.0 + np.exp(-(X[idx] @ coef)))
+    return np.clip(out, 0.0, 0.97)
 
 
 def no_recent_role(feat: pd.DataFrame) -> pd.DataFrame:
@@ -516,28 +560,34 @@ def fit_dispersion(rows: pd.DataFrame, skews: Iterable[float] = (0.0, 0.15, 0.3,
     return out
 
 
-def fit_pzero(rows: pd.DataFrame, prior_n: float = 20.0) -> dict:
-    """Empirical P(no recorded stat) by position x appeared_last x expected-opportunity bucket (smoothed).
+def fit_pzero(rows: pd.DataFrame, l2: float = 1.0, iters: int = 50) -> dict:
+    """Per-position logistic regression of "no recorded stat" on ``PZ_FEATURES`` (Newton/IRLS, L2 on slopes).
 
-    ``rows`` need: pos, appeared_last, exp_opps, played (bool).
+    ``rows`` need: pos, appeared_last, exp_opps, depth, played (bool).
     """
-    r = rows.copy()
-    r["bucket"] = np.clip(np.searchsorted(OPP_BUCKETS, r["exp_opps"].fillna(0).to_numpy(), side="right") - 1, 0,
-                          len(OPP_BUCKETS) - 2)
-    r["absent"] = ~r["played"].astype(bool)
     out = {}
     for pos in POSITIONS:
-        d = r[r["pos"] == pos]
-        tab = {}
-        for state, flag in (("last", True), ("missed_last", False)):
-            ds = d[d["appeared_last"] == flag]
-            base = float(ds["absent"].mean()) if len(ds) else (0.1 if flag else 0.6)
-            vals = []
-            for b in range(len(OPP_BUCKETS) - 1):
-                db = ds[ds["bucket"] == b]
-                vals.append(round(float((db["absent"].sum() + prior_n * base) / (len(db) + prior_n)), 4))
-            tab[state] = vals
-        out[pos] = tab
+        d = rows[rows["pos"] == pos]
+        if len(d) < 50:
+            out[pos] = DEFAULT_PZERO[pos]
+            continue
+        X = pz_design(d)
+        y = (~d["played"].astype(bool)).astype(float).to_numpy()
+        w = np.zeros(X.shape[1])
+        w[0] = np.log(max(y.mean(), 1e-3) / max(1 - y.mean(), 1e-3))
+        reg = np.full(X.shape[1], l2)
+        reg[0] = 0.0
+        for _ in range(iters):
+            pr = 1.0 / (1.0 + np.exp(-(X @ w)))
+            g = X.T @ (pr - y) + reg * w
+            H = (X * (pr * (1 - pr))[:, None]).T @ X + np.diag(reg) + 1e-9 * np.eye(len(w))
+            step = np.linalg.solve(H, g)
+            w -= step
+            if np.abs(step).max() < 1e-8:
+                break
+        pr = 1.0 / (1.0 + np.exp(-(X @ w)))
+        out[pos] = {"coef": [round(float(x), 4) for x in w], "n": int(len(d)), "absent_rate": round(float(y.mean()), 4),
+                    "mean_pred": round(float(pr.mean()), 4)}
     return out
 
 

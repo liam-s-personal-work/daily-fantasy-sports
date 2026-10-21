@@ -229,6 +229,9 @@ def score_against_field(lineups: Sequence[Lineup], keys: Sequence[str], sims: np
     x = np.ascontiguousarray(sims, dtype=np.float32)
     cm = lineup_matrix(lineups, keys)
     fmat = fm.matrix(keys)
+    bad = ((cm != 0).any(axis=0) | (fmat != 0).any(axis=0)) & ~np.isfinite(x).all(axis=0)
+    if bad.any():  # NaN quantiles upstream would otherwise surface as an IndexError in the ranking
+        raise ValueError(f"non-finite simulated points for {[keys[j] for j in np.flatnonzero(bad)][:5]}")
     w = np.asarray(fm.weights, dtype=np.float64)
     s_total = x.shape[0]
     scores = np.empty((s_total, len(lineups)), dtype=np.float32)

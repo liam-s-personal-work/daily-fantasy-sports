@@ -71,8 +71,7 @@ def week_rows(data: m.CFBData, season: int, week: int, table_id: str, params: m.
     rows["role_week"] = np.where(rows["pos"] == "QB", rows["qb_plays"] >= 10, rows["touches"] >= 5)
     # pre-game DFS pool: top recent usage per team / position group
     rows["grp"] = np.where(rows["pos"].isin(["WR", "TE"]), "WRTE", rows["pos"])
-    rows = rows.sort_values(["team_id", "grp", "recent_share_raw", "season_share"], ascending=[True, True, False, False])
-    rows["grp_rank"] = rows.groupby(["team_id", "grp"]).cumcount() + 1
+    rows["grp_rank"] = rows["depth"]  # pre-game rank by recent usage within the team's group (model feature)
     rows["pool_dfs"] = rows["grp_rank"] <= rows["grp"].map(POOL_CAPS).fillna(0)
     rows["naive_avg"] = rows["fpg_s"]
     rows["naive_last"] = rows["last_fp"].fillna(0.0)
@@ -98,10 +97,7 @@ def _project_fast(feats, slope, params, pzero):
     env = (f["implied"] / team_avg).where(f["implied"].notna() & (team_avg > 0), 1.0)
     f["env"] = np.clip(env, params.env_lo, params.env_hi) ** params.beta
     f["mean_played"] = np.maximum(f["base"] * f["workload"] * f["env"] * f["pos"].map(lambda p: params.scale.get(p, 1.0)), 0.0)
-    pzero = pzero or m.DEFAULT_PZERO
-    bucket = np.clip(np.searchsorted(m.OPP_BUCKETS, f["exp_opps"].fillna(0).to_numpy(), side="right") - 1, 0, len(m.OPP_BUCKETS) - 2)
-    f["p_zero"] = [pzero.get(p, pzero["WR"])["last" if la else "missed_last"][int(b)]
-                   for p, la, b in zip(f["pos"], f["appeared_last"], bucket)]
+    f["p_zero"] = m.p_zero_from(f, pzero)
     f["mean"] = (1 - f["p_zero"]) * f["mean_played"]
     return f
 
@@ -179,6 +175,7 @@ def metrics(rows: pd.DataFrame, pool: str, preds: dict[str, str], dispersion=Non
 # --------------------------------------------------------------------------- fitting
 
 
+GRID_KEEP = 500  # best grid rows written next to the report
 GRID = {"usage_basis": ["all", "competitive"], "k_recent": [10.0, 20.0, 40.0, 80.0, 160.0],
         "alpha": [0.25, 0.5, 0.75, 1.0, 1.25], "alpha_down": [0.0, 0.1, 0.25, 0.5], "k0": [0.0, 0.25, 0.5, 1.0, 2.0],
         "w_prev": [0.0, 0.1, 0.2, 0.35, 0.5], "beta": [0.3, 0.5, 0.7, 0.9, 1.1]}
@@ -244,7 +241,7 @@ def tune(data: m.CFBData, season: int, weeks, table_id: str, base: m.CFBParams |
 def fit_tables(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams) -> tuple[m.CFBParams, dict, dict]:
     """p_zero tables, per-position calibration scale, then dispersion, all on the fit season."""
     rows, _ = run(data, season, weeks, table_id, params.with_(scale={}), quantiles=False)
-    pz = m.fit_pzero(rows[["pos", "appeared_last", "exp_opps", "played"]])
+    pz = m.fit_pzero(rows[["pos", "appeared_last", "exp_opps", "depth", "played"]])
     d = rows[rows["pool_dfs"] & rows["played"]]
     scale = {pos: round(float(g["actual"].sum() / g["mean_played"].sum()), 4) for pos, g in d.groupby("pos")}
     params = params.with_(scale=scale)
@@ -255,7 +252,7 @@ def fit_tables(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFB
 
 def ablation(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams, disp, pz) -> pd.DataFrame:
     """Each component switched off in turn (dfs pool, model mean incl. p_zero; plus the role-change subset)."""
-    zero_pz = {p: {"last": [0.0] * (len(m.OPP_BUCKETS) - 1), "missed_last": [0.0] * (len(m.OPP_BUCKETS) - 1)} for p in m.POSITIONS}
+    zero_pz = {p: {"coef": [-1e3] + [0.0] * (len(m.PZ_FEATURES) - 1)} for p in m.POSITIONS}
     variants = {"full model": (params, pz), "no workload adjustment": (params.with_(alpha=0.0, alpha_down=0.0), pz),
                 "no game environment": (params.with_(beta=0.0), pz),
                 "no shrinkage (raw season avg x adj.)": (params.with_(k0=0.0, w_prev=0.0), pz),
@@ -265,7 +262,7 @@ def ablation(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBPa
         rows, _ = run(data, season, weeks, table_id, p, disp, z, quantiles=False)
         d = rows[rows["pool_dfs"]]
         e = d["mean"] - d["actual"]
-        ratio = (d["recent_share"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
+        ratio = (d["recent_share_raw"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
         up = d[ratio >= 1.4]
         eu = up["mean"] - up["actual"]
         out.append({"variant": name, "n": int(len(d)), "MAE": float(e.abs().mean()), "RMSE": float(np.sqrt((e ** 2).mean())),
@@ -275,10 +272,32 @@ def ablation(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBPa
     return pd.DataFrame(out)
 
 
+def aggregate_check(data: m.CFBData) -> pd.DataFrame:
+    """Season sums of the pbp stat lines vs the sportsdataverse season aggregate files (FBS-vs-FBS games)."""
+    from dfs.data import cfb as cfbdata
+    from dfs.data import cfb_stats as cs
+
+    out = []
+    for s in data.seasons:
+        try:
+            agg = {k: cfbdata.load_season(k, s) for k in ("passing", "rushing", "receiving", "schedules")}
+        except cfbdata.DataUnavailable:
+            continue
+        src = data.raw_lines if len(data.raw_lines) else data.lines
+        lines = src[src["season"] == s]  # pre-repair pbp lines: the aggregates are built from the same pbp
+        rep = cs.validate_against_aggregates(lines, agg["passing"], agg["rushing"], agg["receiving"], agg["schedules"])
+        for group in ("passing", "rushing", "receiving"):
+            for stat, r in rep.get(group, {}).get("stats", {}).items():
+                out.append({"season": s, "file": group, "stat": stat, "aggregate_total": r["aggregate_total"],
+                            "pbp_total": r["pbp_total"], "diff_pct": r["total_diff_pct"],
+                            "players_within_2pct": r["player_within_2pct"]})
+    return pd.DataFrame(out)
+
+
 def role_change(rows: pd.DataFrame) -> pd.DataFrame:
-    """Model vs naive on players whose recent share moved >= 40% from their season share (dfs pool)."""
+    """Model vs naive on players whose raw last-two-game share moved >= 40% from their season share (dfs pool)."""
     d = rows[rows["pool_dfs"]].copy()
-    ratio = (d["recent_share"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
+    ratio = (d["recent_share_raw"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
     out = []
     for label, sel in (("recent share up >= 40%", ratio >= 1.4), ("recent share down >= 29%", ratio <= 1 / 1.4),
                        ("stable", (ratio < 1.4) & (ratio > 1 / 1.4))):
@@ -332,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         params, disp, pz = fit_tables(data, a.fit_season, fit_weeks, a.table, params)
         print("best params", asdict(params))
         grid_path = Path(a.out).with_name(Path(a.out).stem.replace("backtest", "tuning") + ".csv")
-        grid.to_csv(grid_path, index=False, float_format="%.5f")
+        grid.head(GRID_KEEP).to_csv(grid_path, index=False, float_format="%.5f")
         print(f"grid -> {grid_path}")
         print("dispersion", json.dumps(disp))
         print("p_zero", json.dumps(pz))
@@ -352,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     for k, v in res.items():
         print(f"== {k}\n{v.round(3).to_string(index=False)}")
     n_role = int((test_rows["role_week"] & test_rows["played"]).sum())
+    res["aggregates"] = aggregate_check(data)
     res["ablation"] = ablation(data, a.test_season, test_weeks, a.table, params, disp, pz)
     res["role_change"] = role_change(test_rows)
     print(res["ablation"].round(3).to_string(index=False))
@@ -365,6 +385,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _headline(res: dict, a) -> list[str]:
+    d = res["test_dfs"]
+    row = lambda pred: d[(d["pos"] == "ALL") & (d["predictor"] == pred)].iloc[0]
+    mo, sa, lg = row("model"), row("season avg"), row("last game")
+    return ["## Headline", "",
+            f"Out of sample ({a.test_season} weeks {a.test_weeks}, dfs pool, n = {int(mo['n'])} player-games): model MAE "
+            f"{mo['MAE']:.2f} / RMSE {mo['RMSE']:.2f} / within-week Spearman {mo['spearman_wk']:.3f} / 10-90 coverage "
+            f"{mo['cov_10_90']:.1%}, vs season-to-date average {sa['MAE']:.2f} / {sa['RMSE']:.2f} / {sa['spearman_wk']:.3f} / "
+            f"{sa['cov_10_90']:.1%} and last game {lg['MAE']:.2f} / {lg['RMSE']:.2f} / {lg['spearman_wk']:.3f} / "
+            f"{lg['cov_10_90']:.1%}. Model bias {mo['bias']:+.2f} points per player-game."]
+
+
 def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_rows, test_missed, n_role, grid,
                  elapsed: float) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -373,6 +405,7 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
     lines = [f"# CFB baseline backtest ({a.table})", "",
              f"Generated by `python -m dfs.backtest_cfb{' --fit' if a.fit else ''}` on {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC "
              f"({elapsed:.0f}s). Every number below is computed from the sportsdataverse release files; none are typed by hand.", "",
+             *_headline(res, a), "",
              "## Protocol", "",
              f"- Model: `dfs.projections.cfb` (season averages adjusted for recent workload and game environment).",
              f"- Fit: parameters {'grid-searched' if a.fit else 'defaults (from an earlier --fit run)'} and dispersion / p_zero tables fit on "
@@ -389,11 +422,14 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
              "- Naive baselines: season-to-date points per game played, and last game's points. Their 10-90 intervals use the "
              "model's fitted dispersion around the naive mean, so coverage compares like with like.", "",
              "## Parameters", "", "```json", json.dumps(asdict(params), indent=1), "```", "",
-             "Dispersion (played SD = a + b*mean, two-piece skew) and p_zero tables:", "", "```json",
+             "Dispersion (played SD = a + b*mean, two-piece skew) and p_zero logistic coefficients "
+             f"({', '.join(m.PZ_FEATURES)}):", "", "```json",
              json.dumps(disp, indent=1), json.dumps(pz), "```", ""]
     if grid is not None:
-        lines += [f"Top of the grid search ({len(grid)} combinations; fit season; objective RMSE of the played mean on the "
-                  "dfs pool's players who played; full grid in the tuning CSV next to this file):", "",
+        n_grid = len(list(itertools.product(*GRID.values())))
+        lines += [f"Top of the grid search ({n_grid} combinations; fit season; objective RMSE of the played mean on the "
+                  f"dfs pool's players who played; the best {min(GRID_KEEP, n_grid)} rows are in the tuning CSV next to "
+                  "this file):", "",
                   _fmt_table(grid.head(8), list(grid.columns)), ""]
     for key, title in (("test_dfs", f"Test {a.test_season} weeks {a.test_weeks}: dfs pool (pre-game)"),
                        ("test_role", f"Test {a.test_season} weeks {a.test_weeks}: role pool (played)"),
@@ -401,8 +437,8 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
                        ("fit_role", f"Fit season {a.fit_season} weeks {a.fit_weeks}: role pool")):
         lines += [f"## {title}", "", _fmt_table(res[key], cols), ""]
     lines += [f"## Ablation ({a.test_season} weeks {a.test_weeks}, dfs pool, model mean)", "",
-              "Each component switched off in turn with everything else fixed. `role_up` = players whose shrunk recent "
-              "share is >= 1.4x their season share (new or growing roles).", "",
+              "Each component switched off in turn with everything else fixed. `role_up` = players whose raw share over "
+              "the team's last two games they played is >= 1.4x their season share (new or growing roles).", "",
               _fmt_table(res["ablation"], list(res["ablation"].columns)), "",
               f"## Role changes ({a.test_season} weeks {a.test_weeks}, dfs pool)", "",
               _fmt_table(res["role_change"], list(res["role_change"].columns)), ""]
@@ -425,6 +461,27 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
                          f"{b['fantasy_points']['within_1']:.1%} | {st['pass_yds']['total_diff_pct']:+.2f}% | {st['rush_yds']['total_diff_pct']:+.2f}% | "
                          f"{st['rec_yds']['total_diff_pct']:+.2f}% | {st['pass_td']['total_diff_pct']:+.2f}% / {st['rush_td']['total_diff_pct']:+.2f}% / {st['rec_td']['total_diff_pct']:+.2f}% |")
         lines.append("")
+        lines += ["How plays were attributed to players (share of plays per role; `id` = ESPN participant id in the pbp, "
+                  "`text` = parsed from the play text and resolved on the team's roster, `inferred` = passer of the team's "
+                  "neighbouring play, for summary rows that name only the defender):", "",
+                  "| season | role | plays | id | text | inferred | unresolved |", "|---|---|---|---|---|---|---|"]
+        for s, val in sorted(v.items()):
+            att = val.get("attribution", {})
+            for role in ("rusher", "sacked", "passer", "target", "fumbler"):
+                r = att.get(role)
+                if not r:
+                    continue
+                n = max(r.get("n", 0), 1)
+                lines.append(f"| {s} | {role} | {r.get('n', 0)} | {r.get('id', 0) / n:.1%} | {r.get('text', 0) / n:.1%} | "
+                             f"{r.get('inferred_from_neighbouring_play', 0) / n:.1%} | {r.get('unresolved', 0) / n:.1%} |")
+            sw = att.get("summary_rows", {})
+            if sw:
+                lines.append(f"| {s} | summary-row ids swapped and fixed | {sw.get('n', 0)} | | {sw.get('swapped_ids_fixed', 0)} rows | | |")
+        lines.append("")
+    if "aggregates" in res and len(res["aggregates"]):
+        lines += ["Season sums vs the sportsdataverse season aggregate files (FBS-vs-FBS games; aggregate `att` excludes "
+                  "interceptions and rushing excludes sacks, so the pbp side is put on the same basis):", "",
+                  _fmt_table(res["aggregates"], list(res["aggregates"].columns)), ""]
     fum = {s: val["box_after_repair"]["stats"]["fumble_lost"]["total_diff_pct"] for s, val in (v or {}).items()
            if val.get("box_after_repair")}
     fum_txt = ", ".join(f"{s}: {x:+.1f}%" for s, x in sorted(fum.items())) or "n/a"
