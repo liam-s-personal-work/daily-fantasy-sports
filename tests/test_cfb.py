@@ -123,7 +123,7 @@ def test_stat_lines_from_synthetic_plays(synth_lines):
     assert ov["carries"] == 2 and ov["rush_yds"] == 7 + 6  # credited "(6)" on the enforced-foul run
     assert ov["two_pt"] == 1
     wr = L.loc[103]
-    assert wr["targets"] == 3  # play 3, play 5 (text target), play 11 (overturned incompletion); not play 12? see below
+    assert wr["targets"] == 4  # play 3, play 5 (text target), play 11 (overturned -> incompletion), play 12 (summary TD)
     te = L.loc[104]
     assert te["rec"] == 1 and te["rec_td"] == 1 and te["rec_yds"] == 11
 
@@ -227,6 +227,8 @@ def synthetic_data(line_week5: bool = True) -> model.CFBData:
         def add(aid, name, **st):
             base = {k: 0.0 for k in cs.COUNT_STATS}
             base.update(st)
+            for c in ("pass_att", "sacks", "carries", "targets"):  # every synthetic snap is competitive
+                base[f"c_{c}"] = base[c]
             lines.append({"season": 2026, "week": w, "game_id": gid, "team_id": 10, "athlete_id": aid, "name": name,
                           "stat_source": "pbp", "usage_ok": True, **base})
         add(1, "Qb One", pass_att=30, pass_cmp=20, pass_yds=250, pass_td=2, sacks=2, rush_att=6, carries=4, rush_yds=20, carry_yds=26)
@@ -307,6 +309,19 @@ def test_point_in_time_no_leakage():
     a = proj.set_index("athlete_id")["mean"].sort_index()
     b = proj2.set_index("athlete_id")["mean"].sort_index()
     pd.testing.assert_series_equal(a, b)
+
+
+def test_vectorised_tuning_mean_matches_project():
+    from dfs import backtest_cfb as bt
+
+    d = synthetic_data()
+    p = model.CFBParams(alpha=0.9, alpha_down=0.2, k0=0.7, w_prev=0.3, beta=0.6, k_recent=15.0)
+    f = model.features(d, 2026, 5, "draftkings.cfb", p)
+    proj = model.project(f, model.role_prior_slope(d, 2026, 5, "draftkings.cfb", p.usage_basis), p)
+    slope = model.role_prior_slope(d, 2026, 5, "draftkings.cfb", p.usage_basis)
+    g = f[f["appeared_recent"]].copy()
+    g["prior_role"] = [slope.get(pos, 0.0) * s for pos, s in zip(g["pos"], g["season_share"])]
+    assert np.allclose(bt.mean_played_vec(g, p), proj["mean_played"].to_numpy())
 
 
 def test_fit_tables_shapes():
@@ -429,6 +444,32 @@ def test_provider_offline_contract():
     for txt in ctx.usage.values():
         assert blind_text(txt) is not None, txt  # nothing a blinded forecaster may not see
     assert all(blind_text(f.text) is not None for f in ctx.structured_facts["AWY@HOM"] if f.kind != "line")
+
+
+def test_provider_falls_back_when_slate_unmatched_or_no_history():
+    from dfs.projections.cfb_provider import CFBProvider
+
+    d = synthetic_data()
+    p = Player(key="ZZZ|some one|WR", name="Some One", team="ZZZ", opponent="YYY", positions=["WR"], game="YYY@ZZZ",
+               start_time=pd.Timestamp("2026-10-10T19:00:00Z").to_pydatetime(), site_avg=8.0)
+    c = _cfb_contest([p]).model_copy(update={"games": ["YYY@ZZZ"]})
+    ctx = CFBProvider(season=2026, data=d).prepare(c)
+    assert ctx.baseline[p.key].source == "site_avg" and "unavailable" in ctx.notes[0]
+    # week 1: the team has no game yet -> reported site-average fallback, not silently dropped
+    q = Player(key="HOM|qb one|QB", name="Qb One", team="HOM", opponent="AWY", positions=["QB"], game="AWY@HOM",
+               start_time=pd.Timestamp("2026-09-12T19:00:00Z").to_pydatetime(), site_avg=20.0)
+    ctx1 = CFBProvider(season=2026, week=1, data=synthetic_data()).prepare(_cfb_contest([q]))
+    assert ctx1.baseline[q.key].source == "site_avg"
+    assert any("NO TEAM HISTORY" in n for n in ctx1.notes)
+
+
+def test_pipeline_uses_cfb_provider():
+    from dfs.pipeline import RunConfig, provider_for
+    from dfs.projections.cfb_provider import CFBProvider
+
+    c = _cfb_contest([])
+    prov = provider_for(c, RunConfig(season=2026, week=8))
+    assert isinstance(prov, CFBProvider) and prov.season == 2026 and prov.week == 8
 
 
 # --------------------------------------------------------------------------- real data (network)

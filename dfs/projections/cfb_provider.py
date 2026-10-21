@@ -47,6 +47,10 @@ NICKNAMES = {"cj": "calvin", "dj": "david", "aj": "anthony", "tj": "thomas", "jj
              "ed": "edward", "kenny": "kenneth", "jimmy": "james", "danny": "daniel", "johnny": "john", "bobby": "robert"}
 
 
+class SlateUnmatched(ValueError):
+    """No slate game could be found in the season's schedule."""
+
+
 class CFBProvider:
     name = "cfb"
 
@@ -70,8 +74,21 @@ class CFBProvider:
     # ------------------------------------------------------------------ public
 
     def prepare(self, contest: Contest, now: datetime | None = None) -> SlateContext:
+        """Baseline + agent texts for a CFB contest. Data problems never fail the run: without usable
+        sportsdataverse data (offline and nothing cached, or no slate game found in the schedule) the
+        site-average ``GenericProvider`` baseline is returned with the reason in ``notes``."""
         if contest.rules.sport != "cfb":
             raise ValueError(f"CFBProvider got a {contest.rules.sport} contest")
+        try:
+            return self._prepare(contest, now)
+        except (cfbdata.DataUnavailable, SlateUnmatched) as e:
+            from dfs.providers import GenericProvider
+
+            ctx = GenericProvider().prepare(contest, now)
+            ctx.notes.insert(0, f"CFB stats baseline unavailable ({e}); using site averages")
+            return ctx
+
+    def _prepare(self, contest: Contest, now: datetime | None) -> SlateContext:
         require("sportsdataverse")
         table = contest.rules.scoring
         when = self._slate_time(contest, now)
@@ -90,7 +107,7 @@ class CFBProvider:
         if week is None:
             wk = data.schedules.set_index("game_id").loc[[g for g in rep.games.values()], "week"] if rep.games else pd.Series(dtype=int)
             if wk.empty:
-                raise ValueError(f"could not match any slate game to the {season} schedule:\n{rep.summary()}")
+                raise SlateUnmatched(f"could not match any slate game to the {season} schedule:\n{rep.summary()}")
             week = int(wk.mode().iloc[0])
             if wk.nunique() > 1:
                 notes.append(f"slate games fall in weeks {sorted(wk.unique().tolist())}; projecting week {week}")
@@ -114,9 +131,11 @@ class CFBProvider:
         idx = self._indexes(data, season, team_ids)
         base: dict[str, Projection] = {}
         ruled_out: set[str] = set()
-        by_ath = proj.set_index(["athlete_id", "team_id"]) if len(proj) else None
-        rem = removed.set_index(["athlete_id", "team_id"]) if len(removed) else None
+        by_ath = proj.set_index(["athlete_id", "team_id"], drop=False) if len(proj) else None
+        rem = removed.set_index(["athlete_id", "team_id"], drop=False) if len(removed) else None
         no_role: dict[str, list[str]] = defaultdict(list)
+        played = cfbdata.before(data.team_totals[data.team_totals["season"] == season], season, week)
+        teams_with_games = set(played["team_id"].astype(int))
         matched_rows: dict[str, pd.Series] = {}
         self.player_matches, self.unmatched = {}, []
         for k, p in contest.players.items():
@@ -138,6 +157,9 @@ class CFBProvider:
                 row = row.iloc[0] if isinstance(row, pd.DataFrame) else row
                 matched_rows[k] = row
                 base[k] = self._projection(k, p, row)
+            elif tid not in teams_with_games:
+                self._unmatched(p, f"{p.team} has no {season} game before week {week}; stats baseline needs one", base,
+                                contest, kind="no_team_history")
             else:
                 last = rem.loc[(aid, tid)] if rem is not None and (aid, tid) in rem.index else None
                 last = last.iloc[0] if isinstance(last, pd.DataFrame) else last
@@ -145,11 +167,14 @@ class CFBProvider:
                        else f"no recorded offensive play in {season}")
                 no_role[p.game or "?"].append(f"{p.name} ({'/'.join(p.positions)}): {why}")
         n_noroles = sum(len(v) for v in no_role.values())
+        n_unm = sum(1 for u in self.unmatched if u.get("kind") == "unmatched")
         notes.append(f"players: {len(contest.players)} on slate, {len(self.player_matches)} matched to ESPN ids, "
-                     f"{len(self.unmatched)} unmatched (site-average fallback), {len(base)} projected, "
+                     f"{n_unm} unmatched and {len(self.unmatched) - n_unm} without team history (site-average fallback), "
+                     f"{len(base)} projected, "
                      f"{n_noroles} without a recent role (left out of the baseline), {len(ruled_out)} ruled out by site status")
         for u in self.unmatched:
-            notes.append(f"PLAYER UNMATCHED: {u['name']} ({u['team']} {'/'.join(u['positions'])}): {u['reason']}")
+            tag = "PLAYER UNMATCHED" if u.get("kind") == "unmatched" else "NO TEAM HISTORY"
+            notes.append(f"{tag}: {u['name']} ({u['team']} {'/'.join(u['positions'])}): {u['reason']}")
 
         market, known, usage, facts = self._texts(contest, data, rep, season, week, matched_rows, no_role, ruled_out)
         return SlateContext(baseline=base, market=market, known=known, usage=usage, structured_facts=facts,
@@ -248,9 +273,9 @@ class CFBProvider:
             return None, f"ambiguous fuzzy match: {close}"
         return None, f"no player on the team matching {name!r}"
 
-    def _unmatched(self, p: Player, reason: str, base: dict, contest: Contest) -> None:
+    def _unmatched(self, p: Player, reason: str, base: dict, contest: Contest, kind: str = "unmatched") -> None:
         self.unmatched.append({"player_key": p.key, "name": p.name, "team": p.team, "positions": p.positions,
-                               "reason": reason})
+                               "reason": reason, "kind": kind})
         if status_out(p.injury_status) or not p.site_avg or p.site_avg <= 0:
             return
         pos = p.positions[0] if p.positions else "WR"
@@ -340,7 +365,7 @@ class CFBProvider:
                 market[g] = "game not matched to the schedule"
             for k, row in sorted(by_game_players.get(g, []), key=lambda kr: (contest.players[kr[0]].team, -kr[1]["recent_share_raw"])):
                 p = contest.players[k]
-                txt = self._usage_line(p, row, L)
+                txt = self._usage_line(p, row, L, self.params.usage_basis)
                 if blind_text(txt) is None:  # never leak; drop the offending sentence
                     continue
                 u_lines.append(f"- {p.name} ({p.team} {'/'.join(p.positions)}): {txt}")
@@ -365,7 +390,7 @@ class CFBProvider:
         return market, known, usage, dict(facts)
 
     @staticmethod
-    def _usage_line(p: Player, row: pd.Series, L: pd.DataFrame) -> str:
+    def _usage_line(p: Player, row: pd.Series, L: pd.DataFrame, basis: str = "all") -> str:
         """Blinded usage summary: volume, shares and production counts (no fantasy points, no lines)."""
         aid, tid = int(row["athlete_id"]), int(row["team_id"])
         d = L[(L["athlete_id"] == aid)]
@@ -374,6 +399,8 @@ class CFBProvider:
         share_s, share_r = float(row["season_share"]), float(row["recent_share_raw"])
         pos = str(row["pos"])
         what = {"QB": "team dropbacks", "RB": "team carries plus targets"}.get(pos, "team pass attempts as targets")
+        if basis == "competitive":
+            what += " (snaps outside garbage time)"
         parts = [f"{int(row['n_s'])} games this season", f"share of {what}: last two games {share_r:.0%}, season {share_s:.0%}"]
         if not bool(row.get("appeared_last", True)):
             parts.append("no recorded play in the team's most recent game")

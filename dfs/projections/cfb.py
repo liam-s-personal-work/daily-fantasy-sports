@@ -39,6 +39,9 @@ from dfs.data import cfb_stats as cs
 from dfs.distributions import quantiles_from_mean_sd
 
 POSITIONS = ("QB", "RB", "WR", "TE")
+# NCAA/ESPN official statistics count sacks as rushing plays (QB rushing yards include sack
+# losses) and DK/FD score from official stats; set False to score rushing without sack yards.
+SACKS_IN_RUSHING = True
 ROSTER_POS = {"QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB", "WR": "WR", "SB": "WR", "TE": "TE"}
 DERIVED_VERSION = "cfb-lines-v3"
 
@@ -132,6 +135,17 @@ class CFBData:
 
     @classmethod
     def build(cls, seasons, lines, team_totals, schedules, game_lines, rosters, teams, validation=None) -> "CFBData":
+        lines, team_totals = lines.copy(), team_totals.copy()
+        # frames without competitive-snap counts (older caches, hand-built tests): use all snaps
+        for c, src in (("c_pass_att", "pass_att"), ("c_sacks", "sacks"), ("c_carries", "carries"), ("c_targets", "targets")):
+            if c not in lines.columns:
+                lines[c] = lines[src]
+        for c, src in (("team_c_pass_att", "team_pass_att"), ("team_c_dropbacks", "team_dropbacks"),
+                       ("team_c_carries", "team_carries")):
+            if c not in team_totals.columns:
+                team_totals[c] = team_totals[src]
+        if "usage_ok" not in team_totals.columns:
+            team_totals["usage_ok"] = True
         tg = team_games_frame(schedules, game_lines)
         pos = positions_frame(lines, rosters)
         lines = lines.merge(pos, on=["season", "athlete_id"], how="left")
@@ -143,7 +157,7 @@ class CFBData:
         """Fantasy points per line under ``table_id`` (cached)."""
         key = ("fp", table_id)
         if key not in self.cache:
-            self.cache[key] = cs.fantasy_points(self.lines, table_id)
+            self.cache[key] = cs.fantasy_points(self.lines, table_id, "rush_yds" if SACKS_IN_RUSHING else "carry_yds")
         return self.cache[key]
 
 

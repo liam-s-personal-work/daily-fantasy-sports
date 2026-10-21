@@ -4,7 +4,8 @@ Rivals are modelled as optimisers of noisy "public" projections: each field line
 ILP optimum of ``mean * exp(sigma*z - sigma^2/2)`` with z iid N(0,1) per player and lineup,
 and a share of NFL lineups is forced to stack its QB. sigma is calibrated on small pilot
 pools so the pool's implied ownership has a realistic concentration (by default the three
-most-owned players average 35%). A given ownership table is matched by first adding
+most-owned players average 35%), capped at 0.5 so small slates and showdowns keep a
+near-optimal, more concentrated field. A given ownership table is matched by first adding
 lineups that contain under-covered players and then reweighting the pool by minimum
 relative entropy (w_i proportional to w0_i * exp(lambda . a_i)).
 """
@@ -17,6 +18,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+from scipy.optimize import minimize
 from scipy.special import logsumexp
 
 from dfs.models import Contest, Lineup, Projection
@@ -240,13 +242,15 @@ def _top3(lineups: Sequence[Lineup], n_boot: int = 0, seed: int = 0) -> float:
 
 
 def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadline: float, sigma0: float = 0.3,
-                    max_evals: int = 4, tol: float = 0.02) -> tuple[float, list[Lineup], list[dict]]:
+                    max_evals: int = 4, tol: float = 0.02, max_sigma: float = 0.5) -> tuple[float, list[Lineup], list[dict]]:
     """Secant search on log(sigma) so the pilot's (bias-corrected) top-3 ownership hits the target.
 
     Pilots share their random draws (common random numbers), which keeps the response
     close to monotone in sigma. If no pilot lands within ``tol``, sigma is interpolated
-    between the closest pilots on either side of the target. Returns (sigma, the pilot
-    lineups if sigma is a pilot's own value else [], trace).
+    between the closest pilots on either side of the target. sigma never exceeds
+    ``max_sigma``: on small slates and showdowns the target is only reachable with
+    near-random public projections, so there the field stays more concentrated than the
+    target. Returns (sigma, the pilot lineups if sigma is a pilot's own value else [], trace).
     """
     z, stack = gen.draws(pilot_size)
     trace: list[dict] = []
@@ -258,7 +262,8 @@ def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadli
         trace.append({"sigma": sigma, "top3": top3, "n": len(pools[sigma])})
         return top3 - target_top3
 
-    lo, hi, fixed = np.log(0.03), np.log(1.5), np.log(1.6)
+    lo, hi, fixed = np.log(0.03), np.log(max_sigma), np.log(1.6)
+    sigma0 = min(sigma0, max_sigma)
     ys, fs = [np.log(sigma0)], [f(sigma0)]
     while abs(fs[-1]) > tol and len(trace) < max_evals and time.perf_counter() < deadline:
         slope = (fs[-1] - fs[-2]) / (ys[-1] - ys[-2]) if len(ys) > 1 and ys[-1] != ys[-2] else 0.0
@@ -283,67 +288,36 @@ def calibrate_noise(gen: _Generator, target_top3: float, pilot_size: int, deadli
     return float(np.exp(y)), [], trace
 
 
-def _cg(matvec, b: np.ndarray, iters: int, rtol: float = 1e-8) -> np.ndarray:
-    """Conjugate gradient for a symmetric positive-definite operator."""
-    x = np.zeros_like(b)
-    r = b.copy()
-    d = r.copy()
-    rr = r @ r
-    stop = (rtol * rtol) * rr
-    for _ in range(iters):
-        if rr <= stop or rr == 0.0:
-            break
-        hd = matvec(d)
-        alpha = rr / (d @ hd)
-        x += alpha * d
-        r -= alpha * hd
-        rr_new = r @ r
-        d = r + (rr_new / rr) * d
-        rr = rr_new
-    return x
-
-
 def entropy_reweight(a: np.ndarray, w0: np.ndarray, target: np.ndarray, ridge: float = 1e-4,
-                     max_iter: int = 100) -> tuple[np.ndarray, dict[str, float]]:
+                     max_iter: int = 3000) -> tuple[np.ndarray, dict[str, float]]:
     """Weights closest to ``w0`` in KL divergence with ``a.T @ w`` ~= ``target``.
 
-    Dual: minimise logsumexp(log w0 + a @ lam) - lam . target + ridge/2 |lam|^2 by damped
-    Newton steps, each solved by conjugate gradient on Hessian-vector products (matrix-
-    vector BLAS only: small multithreaded LAPACK calls were ~300x slower on 4-core hosts).
-    The ridge keeps the problem bounded when a target is unattainable from the pool.
+    Dual: minimise logsumexp(log w0 + a @ lam) - lam . target + ridge/2 |lam|^2 by L-BFGS
+    (matrix-vector BLAS only: small multithreaded LAPACK calls were ~300x slower on 4-core
+    hosts). Newton steps crawled here: when the target is unattainable from the pool the
+    Hessian is near-singular and 100 damped steps stopped on a collapsed weight vector.
+    The ridge keeps the problem bounded when a target is unattainable.
     """
+    w0 = np.asarray(w0, dtype=float)
+    target = np.asarray(target, dtype=float)
     logw0 = np.log(np.clip(w0, 1e-300, None))
     m = a.shape[1]
-    lam = np.zeros(m)
     if m == 0:
-        return np.asarray(w0, dtype=float) / np.sum(w0), {"fit_max_abs_err_pct": 0.0, "fit_mean_abs_err_pct": 0.0,
-                                                           "ess": float(1.0 / np.sum((w0 / np.sum(w0)) ** 2)),
-                                                           "converged": 1.0}
+        return w0 / np.sum(w0), {"fit_max_abs_err_pct": 0.0, "fit_mean_abs_err_pct": 0.0,
+                                 "ess": float(1.0 / np.sum((w0 / np.sum(w0)) ** 2)), "converged": 1.0}
 
-    def value(lam: np.ndarray) -> tuple[float, np.ndarray]:
+    def value_grad(lam: np.ndarray) -> tuple[float, np.ndarray]:
         s = logw0 + a @ lam
         lse = float(logsumexp(s))
-        return lse - lam @ target + 0.5 * ridge * lam @ lam, np.exp(s - lse)
+        p = np.exp(s - lse)
+        return lse - lam @ target + 0.5 * ridge * lam @ lam, a.T @ p - target + ridge * lam
 
-    f, p = value(lam)
-    converged = 0.0
-    for _ in range(max_iter):
-        ap = a.T @ p
-        g = ap - target + ridge * lam
-        if np.abs(g).max() < 1e-6:  # ownership fractions: 1e-4 percentage points
-            converged = 1.0
-            break
-        def hvp(v: np.ndarray, p: np.ndarray = p, ap: np.ndarray = ap) -> np.ndarray:  # Hessian-vector product
-            return a.T @ (p * (a @ v)) - ap * (ap @ v) + ridge * v
-
-        d = _cg(hvp, -g, iters=min(2 * m, 200))
-        step = 1.0
-        while step > 1e-10:
-            f_new, p_new = value(lam + step * d)
-            if f_new <= f + 1e-4 * step * (g @ d):
-                break
-            step *= 0.5
-        lam, f, p = lam + step * d, f_new, p_new
+    res = minimize(value_grad, np.zeros(m), jac=True, method="L-BFGS-B",
+                   options={"maxiter": max_iter, "gtol": 1e-9, "ftol": 1e-15, "maxcor": 30})
+    s = logw0 + a @ res.x
+    p = np.exp(s - logsumexp(s))
+    g = a.T @ p - target + ridge * res.x
+    converged = float(np.abs(g).max() < 1e-6)  # ownership fractions: 1e-4 percentage points
     err = np.abs(a.T @ p - target)
     return p, {"fit_max_abs_err_pct": float(100 * err.max()) if err.size else 0.0,
                "fit_mean_abs_err_pct": float(100 * err.mean()) if err.size else 0.0,
@@ -387,11 +361,14 @@ def _finish(contest: Contest, lineups: list[Lineup], weights: np.ndarray, sigma:
 def build_field(contest: Contest, projections: Mapping[str, Projection | float], *, n_lineups: int = 150,
                 noise: float | None = None, target_top3: float = 0.35, stack_share: float = 0.5,
                 ownership: Mapping[str, float] | None = None, public_points: Mapping[str, float] | None = None,
-                pilot_size: int = 40, seed: int = 23, time_budget_s: float = 45.0) -> FieldModel:
+                pilot_size: int = 40, seed: int = 23, time_budget_s: float = 45.0,
+                max_noise: float = 0.5) -> FieldModel:
     """Pool of plausible rival lineups with weights and implied ownership.
 
     ``public_points`` replaces our means as the public's baseline (e.g. a site-average
     blend). ``ownership`` (player_key -> percent) is matched by :func:`fit_ownership`.
+    A calibrated sigma is capped at ``max_noise`` (stats["noise_capped"] = 1 when the cap
+    binds); an explicit ``noise`` is used as given.
     About ``n_lineups`` + 4 * ``pilot_size`` solves at most, stopped early by the budget.
     """
     t0 = time.perf_counter()
@@ -400,8 +377,11 @@ def build_field(contest: Contest, projections: Mapping[str, Projection | float],
     gen = _Generator(contest, base, stack_share, seed)
     trace: list[dict] = []
     pilot: list[Lineup] = []
+    capped = 0.0
     if noise is None:
-        noise, pilot, trace = calibrate_noise(gen, target_top3, pilot_size, t0 + 0.45 * time_budget_s)
+        noise, pilot, trace = calibrate_noise(gen, target_top3, pilot_size, t0 + 0.45 * time_budget_s,
+                                              max_sigma=max_noise)
+        capped = float(noise >= max_noise * (1 - 1e-9))
     z, stack = gen.draws(max(n_lineups - len(pilot), 0))
     lineups = pilot + gen.pool(z, stack, noise, deadline, min_n=max(1, 20 - len(pilot)))
     if not lineups:
@@ -409,7 +389,7 @@ def build_field(contest: Contest, projections: Mapping[str, Projection | float],
     uniq, w = _dedupe(lineups)
     stats = {"n_solves": float(gen.n_solves), "n_lineups": float(len(lineups)),
              "calibration_evals": float(len(trace)), "target_top3_pct": 100 * target_top3,
-             "build_s": time.perf_counter() - t0}
+             "noise_capped": capped, "build_s": time.perf_counter() - t0}
     fm = _finish(contest, uniq, w, noise, stats)
     fm.stats.update({f"pilot{i}_sigma": t["sigma"] for i, t in enumerate(trace)})
     fm.stats.update({f"pilot{i}_top3_pct": 100 * t["top3"] for i, t in enumerate(trace)})

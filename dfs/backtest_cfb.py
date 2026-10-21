@@ -179,39 +179,115 @@ def metrics(rows: pd.DataFrame, pool: str, preds: dict[str, str], dispersion=Non
 # --------------------------------------------------------------------------- fitting
 
 
-GRID = {"alpha": [0.5, 0.8, 1.0], "k_recent": [10.0, 20.0, 40.0], "k0": [0.5, 1.0, 2.0],
-        "w_prev": [0.1, 0.2, 0.35], "beta": [0.4, 0.7, 1.0]}
+GRID = {"usage_basis": ["all", "competitive"], "k_recent": [10.0, 20.0, 40.0, 80.0, 160.0],
+        "alpha": [0.25, 0.5, 0.75, 1.0, 1.25], "alpha_down": [0.0, 0.1, 0.25, 0.5], "k0": [0.0, 0.25, 0.5, 1.0, 2.0],
+        "w_prev": [0.0, 0.1, 0.2, 0.35, 0.5], "beta": [0.3, 0.5, 0.7, 0.9, 1.1]}
+
+
+def _static_frame(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams) -> pd.DataFrame:
+    """Per-week rows that do not depend on the mean parameters (features, prior role, actuals, pools)."""
+    rows, _ = run(data, season, weeks, table_id, params, quantiles=False)
+    slopes = {w: m.role_prior_slope(data, season, w, table_id, params.usage_basis) for w in weeks}
+    rows["prior_role"] = [slopes[w].get(p, slopes[w].get("WR", 0.0)) * s
+                          for w, p, s in zip(rows["week"], rows["pos"], rows["season_share"])]
+    return rows
+
+
+def mean_played_vec(f: pd.DataFrame, p: m.CFBParams) -> np.ndarray:
+    """``project``'s played mean, vectorised over a static frame (identical arithmetic)."""
+    wp = p.w_prev * np.minimum(f["n_prev"].fillna(0).to_numpy(float), p.cap_prev)
+    base = ((f["n_s"].to_numpy(float) * f["fpg_s"].to_numpy(float) + wp * f["fpg_prev"].fillna(0.0).to_numpy(float)
+             + p.k0 * f["prior_role"].to_numpy(float)) / (f["n_s"].to_numpy(float) + wp + p.k0))
+    ss = f["season_share"].to_numpy(float)
+    ratio = np.where(ss > 0, f["recent_share"].to_numpy(float) / np.where(ss > 0, ss, 1.0), 1.0)
+    r = np.clip(ratio, p.ratio_lo, p.ratio_hi)
+    work = np.where(r >= 1.0, r ** p.alpha, r ** p.alpha_down)
+    league = f["league_ppg"].to_numpy(float)
+    team_n = f["team_n"].to_numpy(float)
+    team_avg = (team_n * f["team_ppg"].fillna(f["league_ppg"]).to_numpy(float) + p.k_team * league) / (team_n + p.k_team)
+    imp = f["implied"].to_numpy(float)
+    env = np.where(np.isfinite(imp) & (team_avg > 0), imp / np.where(team_avg > 0, team_avg, 1.0), 1.0)
+    env = np.clip(env, p.env_lo, p.env_hi) ** p.beta
+    scale = f["pos"].map(dict(p.scale)).fillna(1.0).to_numpy(float) if p.scale else 1.0
+    return np.maximum(base * work * env * scale, 0.0)
 
 
 def tune(data: m.CFBData, season: int, weeks, table_id: str, base: m.CFBParams | None = None, log=print) -> tuple[m.CFBParams, pd.DataFrame]:
-    """Grid search on the pre-game pool's MAE (model mean incl. p_zero). Returns best params and the grid."""
-    base = base or m.CFBParams()
+    """Grid search for the played-outcome mean: RMSE of ``mean_played`` on the pre-game dfs pool's
+    players who then played (RMSE, not MAE: DFS needs expected points, and MAE rewards the lower
+    median of right-skewed outcomes). Availability (p_zero) is fit afterwards, separately."""
+    base = (base or m.CFBParams()).with_(scale={})
     results = []
-    for kr in GRID["k_recent"]:
-        p_kr = base.with_(k_recent=kr)
-        feats = {(season, w): m.features(data, season, w, table_id, p_kr, team_ids=fbs_team_ids(data, season, w)) for w in weeks}
-        for a, k0, wp, b in itertools.product(GRID["alpha"], GRID["k0"], GRID["w_prev"], GRID["beta"]):
-            p = p_kr.with_(alpha=a, k0=k0, w_prev=wp, beta=b)
-            rows, _ = run(data, season, weeks, table_id, p, feats_cache=feats, quantiles=False)
-            d = rows[rows["pool_dfs"]]
-            e = d["mean"] - d["actual"]
-            r = rows[rows["role_week"] & rows["played"]]
-            results.append({"k_recent": kr, "alpha": a, "k0": k0, "w_prev": wp, "beta": b,
-                            "mae_dfs": float(e.abs().mean()), "rmse_dfs": float(np.sqrt((e ** 2).mean())),
-                            "mae_role": float((r["mean_played"] - r["actual"]).abs().mean()), "n": int(len(d))})
-        log(f"  tuned k_recent={kr}: best so far MAE {min(x['mae_dfs'] for x in results):.3f}")
-    grid = pd.DataFrame(results).sort_values("mae_dfs")
+    for basis, kr in itertools.product(GRID["usage_basis"], GRID["k_recent"]):
+        p_kr = base.with_(k_recent=kr, usage_basis=basis)
+        f = _static_frame(data, season, weeks, table_id, p_kr)
+        dfs_played = (f["pool_dfs"] & f["played"]).to_numpy()
+        role = (f["role_week"] & f["played"]).to_numpy()
+        y = f["actual"].to_numpy(float)
+        for a, ad, k0, wp, b in itertools.product(GRID["alpha"], GRID["alpha_down"], GRID["k0"], GRID["w_prev"], GRID["beta"]):
+            p = p_kr.with_(alpha=a, alpha_down=ad, k0=k0, w_prev=wp, beta=b)
+            mp = mean_played_vec(f, p)
+            e = mp[dfs_played] - y[dfs_played]
+            er = mp[role] - y[role]
+            results.append({"usage_basis": basis, "k_recent": kr, "alpha": a, "alpha_down": ad, "k0": k0, "w_prev": wp,
+                            "beta": b, "rmse_dfs_played": float(np.sqrt((e ** 2).mean())),
+                            "mae_dfs_played": float(np.abs(e).mean()), "bias_dfs_played": float(e.mean()),
+                            "rmse_role": float(np.sqrt((er ** 2).mean())), "n": int(dfs_played.sum())})
+        log(f"  {basis} k_recent={kr}: best so far RMSE {min(x['rmse_dfs_played'] for x in results):.4f}")
+    grid = pd.DataFrame(results).sort_values("rmse_dfs_played").reset_index(drop=True)
     best = grid.iloc[0]
-    return base.with_(k_recent=float(best.k_recent), alpha=float(best.alpha), k0=float(best.k0),
-                      w_prev=float(best.w_prev), beta=float(best.beta)), grid
+    return base.with_(usage_basis=str(best.usage_basis), k_recent=float(best.k_recent), alpha=float(best.alpha),
+                      alpha_down=float(best.alpha_down), k0=float(best.k0), w_prev=float(best.w_prev),
+                      beta=float(best.beta), scale=m.CFBParams().scale), grid
 
 
-def fit_tables(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams) -> tuple[dict, dict]:
-    rows, _ = run(data, season, weeks, table_id, params, quantiles=False)
+def fit_tables(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams) -> tuple[m.CFBParams, dict, dict]:
+    """p_zero tables, per-position calibration scale, then dispersion, all on the fit season."""
+    rows, _ = run(data, season, weeks, table_id, params.with_(scale={}), quantiles=False)
     pz = m.fit_pzero(rows[["pos", "appeared_last", "exp_opps", "played"]])
-    played = rows[rows["played"]][["pos", "mean_played", "actual"]]
-    disp = m.fit_dispersion(played)
-    return disp, pz
+    d = rows[rows["pool_dfs"] & rows["played"]]
+    scale = {pos: round(float(g["actual"].sum() / g["mean_played"].sum()), 4) for pos, g in d.groupby("pos")}
+    params = params.with_(scale=scale)
+    rows, _ = run(data, season, weeks, table_id, params, pzero=pz, quantiles=False)
+    disp = m.fit_dispersion(rows[rows["played"]][["pos", "mean_played", "actual"]])
+    return params, disp, pz
+
+
+def ablation(data: m.CFBData, season: int, weeks, table_id: str, params: m.CFBParams, disp, pz) -> pd.DataFrame:
+    """Each component switched off in turn (dfs pool, model mean incl. p_zero; plus the role-change subset)."""
+    zero_pz = {p: {"last": [0.0] * (len(m.OPP_BUCKETS) - 1), "missed_last": [0.0] * (len(m.OPP_BUCKETS) - 1)} for p in m.POSITIONS}
+    variants = {"full model": (params, pz), "no workload adjustment": (params.with_(alpha=0.0, alpha_down=0.0), pz),
+                "no game environment": (params.with_(beta=0.0), pz),
+                "no shrinkage (raw season avg x adj.)": (params.with_(k0=0.0, w_prev=0.0), pz),
+                "no p_zero": (params, zero_pz), "no calibration scale": (params.with_(scale={}), pz)}
+    out = []
+    for name, (p, z) in variants.items():
+        rows, _ = run(data, season, weeks, table_id, p, disp, z, quantiles=False)
+        d = rows[rows["pool_dfs"]]
+        e = d["mean"] - d["actual"]
+        ratio = (d["recent_share"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
+        up = d[ratio >= 1.4]
+        eu = up["mean"] - up["actual"]
+        out.append({"variant": name, "n": int(len(d)), "MAE": float(e.abs().mean()), "RMSE": float(np.sqrt((e ** 2).mean())),
+                    "bias": float(e.mean()), "spearman_wk": _spearman_by_week(d, "mean"),
+                    "n_role_up": int(len(up)), "RMSE_role_up": float(np.sqrt((eu ** 2).mean())) if len(up) else float("nan"),
+                    "bias_role_up": float(eu.mean()) if len(up) else float("nan")})
+    return pd.DataFrame(out)
+
+
+def role_change(rows: pd.DataFrame) -> pd.DataFrame:
+    """Model vs naive on players whose recent share moved >= 40% from their season share (dfs pool)."""
+    d = rows[rows["pool_dfs"]].copy()
+    ratio = (d["recent_share"] / d["season_share"].replace(0, np.nan)).fillna(1.0)
+    out = []
+    for label, sel in (("recent share up >= 40%", ratio >= 1.4), ("recent share down >= 29%", ratio <= 1 / 1.4),
+                       ("stable", (ratio < 1.4) & (ratio > 1 / 1.4))):
+        g = d[sel]
+        for pred, col in (("model", "mean"), ("season avg", "naive_avg"), ("last game", "naive_last")):
+            e = g[col] - g["actual"]
+            out.append({"subset": label, "predictor": pred, "n": int(len(g)), "MAE": float(e.abs().mean()),
+                        "RMSE": float(np.sqrt((e ** 2).mean())), "bias": float(e.mean())})
+    return pd.DataFrame(out)
 
 
 # --------------------------------------------------------------------------- report
@@ -253,10 +329,16 @@ def main(argv: list[str] | None = None) -> int:
     if a.fit:
         print(f"tuning on {a.fit_season} weeks {a.fit_weeks} ({len(list(itertools.product(*GRID.values())))} combos)")
         params, grid = tune(data, a.fit_season, fit_weeks, a.table)
+        params, disp, pz = fit_tables(data, a.fit_season, fit_weeks, a.table, params)
         print("best params", asdict(params))
-        disp, pz = fit_tables(data, a.fit_season, fit_weeks, a.table, params)
+        grid_path = Path(a.out).with_name(Path(a.out).stem.replace("backtest", "tuning") + ".csv")
+        grid.to_csv(grid_path, index=False, float_format="%.5f")
+        print(f"grid -> {grid_path}")
         print("dispersion", json.dumps(disp))
         print("p_zero", json.dumps(pz))
+    grid_path = Path(a.out).with_name(Path(a.out).stem.replace("backtest", "tuning") + ".csv")
+    if grid is None and grid_path.exists():
+        grid = pd.read_csv(grid_path)  # from the last --fit run, for the report
     test_rows, test_missed = run(data, a.test_season, test_weeks, a.table, params, disp, pz)
     fit_rows, _ = run(data, a.fit_season, fit_weeks, a.table, params, disp, pz)
     preds = {"model": "mean", "season avg": "naive_avg", "last game": "naive_last"}
@@ -270,6 +352,10 @@ def main(argv: list[str] | None = None) -> int:
     for k, v in res.items():
         print(f"== {k}\n{v.round(3).to_string(index=False)}")
     n_role = int((test_rows["role_week"] & test_rows["played"]).sum())
+    res["ablation"] = ablation(data, a.test_season, test_weeks, a.table, params, disp, pz)
+    res["role_change"] = role_change(test_rows)
+    print(res["ablation"].round(3).to_string(index=False))
+    print(res["role_change"].round(3).to_string(index=False))
     report = write_report(Path(a.out), data, a, params, disp, pz, res, test_rows, test_missed, n_role, grid,
                           time.time() - t0)
     print(f"wrote {report}")
@@ -306,12 +392,20 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
              "Dispersion (played SD = a + b*mean, two-piece skew) and p_zero tables:", "", "```json",
              json.dumps(disp, indent=1), json.dumps(pz), "```", ""]
     if grid is not None:
-        lines += ["Top of the grid search (fit season, dfs pool):", "", _fmt_table(grid.head(8), list(grid.columns)), ""]
+        lines += [f"Top of the grid search ({len(grid)} combinations; fit season; objective RMSE of the played mean on the "
+                  "dfs pool's players who played; full grid in the tuning CSV next to this file):", "",
+                  _fmt_table(grid.head(8), list(grid.columns)), ""]
     for key, title in (("test_dfs", f"Test {a.test_season} weeks {a.test_weeks}: dfs pool (pre-game)"),
                        ("test_role", f"Test {a.test_season} weeks {a.test_weeks}: role pool (played)"),
                        ("fit_dfs", f"Fit season {a.fit_season} weeks {a.fit_weeks}: dfs pool (in-sample for parameters)"),
                        ("fit_role", f"Fit season {a.fit_season} weeks {a.fit_weeks}: role pool")):
         lines += [f"## {title}", "", _fmt_table(res[key], cols), ""]
+    lines += [f"## Ablation ({a.test_season} weeks {a.test_weeks}, dfs pool, model mean)", "",
+              "Each component switched off in turn with everything else fixed. `role_up` = players whose shrunk recent "
+              "share is >= 1.4x their season share (new or growing roles).", "",
+              _fmt_table(res["ablation"], list(res["ablation"].columns)), "",
+              f"## Role changes ({a.test_season} weeks {a.test_weeks}, dfs pool)", "",
+              _fmt_table(res["role_change"], list(res["role_change"].columns)), ""]
     miss_n = len(test_missed)
     lines += ["## Coverage of the projection set", "",
               f"- Test role-pool player-games projected: {n_role}; role players with no projection (no recorded play in the team's "
@@ -331,6 +425,26 @@ def write_report(path: Path, data: m.CFBData, a, params, disp, pz, res, test_row
                          f"{b['fantasy_points']['within_1']:.1%} | {st['pass_yds']['total_diff_pct']:+.2f}% | {st['rush_yds']['total_diff_pct']:+.2f}% | "
                          f"{st['rec_yds']['total_diff_pct']:+.2f}% | {st['pass_td']['total_diff_pct']:+.2f}% / {st['rush_td']['total_diff_pct']:+.2f}% / {st['rec_td']['total_diff_pct']:+.2f}% |")
         lines.append("")
+    fum = {s: val["box_after_repair"]["stats"]["fumble_lost"]["total_diff_pct"] for s, val in (v or {}).items()
+           if val.get("box_after_repair")}
+    fum_txt = ", ".join(f"{s}: {x:+.1f}%" for s, x in sorted(fum.items())) or "n/a"
+    lines += ["## Known limitations", "",
+              "- Lines: the ESPN betting file holds pre-game lines only for games already played (closing-type). Live slates "
+              "have no line in these files, so the environment factor is off unless lines are passed to `CFBProvider(lines=...)`; "
+              "backtest accuracy with lines is therefore a little better than a Wednesday projection would see.",
+              "- Sacks are scored as rushing yards (NCAA official convention, `SACKS_IN_RUSHING`); not confirmed against a "
+              "DK/FD CFB box score. Special-teams fumbles and kneel-downs logged under a team name are not attributed (see "
+              f"validation: fumbles lost vs the box {fum_txt}; a few tenths of a point per affected player-game).",
+              "- Play-by-play gaps: 2024 incompletion texts often omit the target (target shares from 2024 are partial); "
+              "team-games whose pbp is visibly incomplete are scored from the official box and excluded from usage shares.",
+              "- The season aggregate files are themselves derived from cfbfastR pbp, so agreeing with them checks parsing "
+              "consistency; the ESPN box comparison is the independent check.",
+              "- Recent workload adds little on average this early in the season (the last two games are a large share of a "
+              "2-6 game season); its value is concentrated in players whose role grew (see role-change table).",
+              "- Coverage of the projection set: players with no recorded play in their team's last two games (returning "
+              "from injury, debutants) are not projected; first-time starters are invisible to a stats-only baseline.",
+              "- Positions come from ESPN rosters (TE kept separate from WR even though DK lists TEs as WR); players without a "
+              "roster entry get a usage-inferred position computed over their whole season.", ""]
     path.write_text("\n".join(lines))
     return path
 

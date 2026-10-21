@@ -425,7 +425,8 @@ def strategy_summary(contest: Contest, ranked: Sequence[Lineup], fm: FieldModel,
         "field": {"n_lineups": len(fm.lineups), "noise_sigma": round(fm.noise, 4),
                   "top_owned": [(players[p].name, round(v, 1)) for p, v in fm.top_owned(8)],
                   **{x: round(fm.stats[x], 4) for x in ("max_own_pct", "top3_own_pct", "share_salary_ge_98pct",
-                                                        "share_qb_stacked", "ess", "fit_max_abs_err_pct")
+                                                        "share_qb_stacked", "ess", "fit_max_abs_err_pct",
+                                                        "noise_capped")
                      if x in fm.stats}},
         "timings_s": {k2: round(v, 2) for k2, v in (timings or {}).items()},
     }

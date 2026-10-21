@@ -46,7 +46,6 @@ GARBAGE_MARGIN = {1: 43, 2: 37, 3: 27, 4: 21}
 OFFENSE_POS = {"QB", "RB", "WR", "TE", "FB", "ATH", "HB", "SB", "TB", "-", ""}
 FUMBLE_LOST_TYPES = {"Fumble Recovery (Opponent)", "Fumble Recovery (Opponent) Touchdown", "Fumble Return Touchdown"}
 RETURN_TD_TYPES = {"Punt Return Touchdown", "Kickoff Return Touchdown", "Kickoff Return (Offense) Touchdown"}
-DEAD_TYPES = {"Penalty", "Timeout", "End Period", "End of Half", "End of Game", "End of Regulation", "Uncategorized"}
 _SUFFIX = {"jr", "sr", "ii", "iii", "iv", "v", "lll"}
 
 

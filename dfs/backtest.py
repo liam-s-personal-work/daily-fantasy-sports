@@ -432,8 +432,11 @@ def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame 
           "- Metrics: MAE, RMSE, bias = mean(pred - actual), spearman = mean within-week rank correlation, "
           "top3 = share of each week's actual top-3 at the position that were in the projected top-3, cover80 = "
           "share of actuals inside [p10, p90] (target 0.80), pinball = mean quantile loss over p10/p50/p90.",
-          "- Hyper-parameters were tuned on 2024-2025 weeks 3-17 only (DK, pool A, mean of per-position MAE). "
-          "The 2026 weeks were not used for tuning.", ""]
+          "- Hyper-parameters were tuned on 2024-2025 weeks 3-17 only (DK, pool A, mean of per-position MAE, "
+          "then pinball loss for dispersion). No parameter was chosen from 2026 results. Disclosure: 2026 weeks "
+          "3-6 were also run during development with the untuned defaults and one interim parameter set (as a "
+          "smoke test), and 2026 QB-starter hit rates were visible when the depth-chart-first starter rule was "
+          "adopted on 2025 evidence (95.4% vs 92.9% on 2025 games).", ""]
     for t in TABLES:
         if t not in set(holdout["table"]):
             continue
@@ -617,6 +620,11 @@ KNOWN_WEAKNESSES = [
     "and FD); DK's rule (opponent points minus 6 per opponent defensive TD, the XP still counts) "
     "differs from the research note and should be re-checked as more games accumulate.",
     "Stat-line simulation draws players independently; cross-player correlation is left to dfs.sim.",
+    "Quantiles in pool A: fewer actuals fall below p10 than the 10% target (lower tail too long) and more "
+    "exceed p90. Part of this is selection (pool A excludes the early-exit and low-snap games the played "
+    "distribution includes); the pinball-tuned dispersion was chosen on 2024-2025 with that same pool.",
+    "Backup QBs are projected as if they start (p_zero = 1 - start probability); relief appearances are not "
+    "modelled, so their played distribution is too high when they only enter late.",
 ]
 
 
