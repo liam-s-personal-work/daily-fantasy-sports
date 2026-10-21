@@ -78,7 +78,7 @@ class SDKBackend:
         self.workdir = workdir or tempfile.mkdtemp(prefix="dfs-agent-")
 
     async def run(self, task: AgentTask) -> AgentResult:
-        from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+        from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, query
 
         from dfs.sources import FETCH_ALLOW_DOMAINS
 
@@ -102,7 +102,13 @@ class SDKBackend:
         )
         t0 = time.monotonic()
         result: AgentResult | None = None
+        tool_calls: dict[str, int] = {}  # what the agent actually used (the result's usage omits client-side search)
         async for msg in query(prompt=task.prompt, options=opts):
+            if isinstance(msg, AssistantMessage):
+                for b in msg.content:
+                    name = getattr(b, "name", None)
+                    if name and hasattr(b, "input"):
+                        tool_calls[name] = tool_calls.get(name, 0) + 1
             if isinstance(msg, ResultMessage):
                 usage = msg.usage or {}
                 stu = usage.get("server_tool_use") or {}
@@ -111,10 +117,13 @@ class SDKBackend:
                 result = AgentResult(
                     name=task.name, output=out if ok else None, ok=ok,
                     cost_usd=float(msg.total_cost_usd or 0.0), seconds=time.monotonic() - t0,
-                    web_searches=int(stu.get("web_search_requests") or 0),
+                    web_searches=max(int(stu.get("web_search_requests") or 0),
+                                     tool_calls.get("WebSearch", 0) + tool_calls.get("web_search", 0)),
                     error=None if ok else f"result subtype {msg.subtype}",
-                    usage={k: usage.get(k) for k in ("input_tokens", "output_tokens",
-                                                     "cache_read_input_tokens", "cache_creation_input_tokens")},
+                    usage={**{k: usage.get(k) for k in ("input_tokens", "output_tokens",
+                                                        "cache_read_input_tokens", "cache_creation_input_tokens")},
+                           "tool_calls": dict(tool_calls),
+                           "permission_denials": len(getattr(msg, "permission_denials", None) or [])},
                 )
         if result is None:
             result = AgentResult(name=task.name, output=None, ok=False, seconds=time.monotonic() - t0,

@@ -172,3 +172,34 @@ def test_sources_gate_and_blind():
     assert blind_text("He is a full participant in practice") is not None
     for leak in ("Bills are -3.5 favorites", "salary of $7,800", "scored 24.5 fantasy points", "implied team total 27"):
         assert blind_text(leak) is None
+
+
+def test_sdk_backend_options_and_tool_counting(monkeypatch):
+    """The SDK is called with deny-by-default permissions, and searches are counted from the tool calls."""
+    sdk = pytest.importorskip("claude_agent_sdk")
+    from dfs.llm.backend import SDKBackend
+    from dfs.sources import FETCH_ALLOW_DOMAINS
+
+    seen = {}
+
+    async def fake_query(prompt, options):
+        seen["opts"] = options
+        yield sdk.AssistantMessage(content=[sdk.ToolUseBlock(id="1", name="WebSearch", input={"query": "x"}),
+                                            sdk.ToolUseBlock(id="2", name="WebSearch", input={"query": "y"})],
+                                   model="m")
+        yield sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=2,
+                                session_id="s", total_cost_usd=0.01, usage={"output_tokens": 5},
+                                structured_output={"answer": "ok"}, permission_denials=[{"tool_name": "WebFetch"}])
+
+    monkeypatch.setattr(sdk, "query", fake_query)
+    t = AgentTask(stage="research", name="r", system="s", prompt="p", tools=["WebSearch", "WebFetch"],
+                  schema={"type": "object", "properties": {"answer": {"type": "string"}}})
+    r = asyncio.run(SDKBackend().run(t))
+    o = seen["opts"]
+    assert r.ok and r.output == {"answer": "ok"} and r.web_searches == 2
+    assert r.usage["permission_denials"] == 1
+    assert o.permission_mode == "dontAsk" and o.setting_sources == []
+    assert "WebFetch" not in o.allowed_tools  # never a blanket fetch grant
+    assert sorted(a for a in o.allowed_tools if a.startswith("WebFetch(")) == sorted(
+        f"WebFetch(domain:{d})" for d in FETCH_ALLOW_DOMAINS)
+    assert set(o.tools) == {"WebSearch", "WebFetch"}  # no Bash/Read/Write/Edit available to agents
