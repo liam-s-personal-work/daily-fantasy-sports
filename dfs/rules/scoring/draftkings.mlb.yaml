@@ -1,0 +1,13 @@
+id: draftkings.mlb
+site: draftkings
+sport: mlb
+version: 2026-10-21
+verified: {status: partial, method: "DK-owned MLB scoring guide + Pick6; caught stealing UNCONFIRMED (0 here)"}
+sources: [https://dknetwork.draftkings.com/2020/05/29/beginner-mlb-dfs-scoring/]
+role_by_position: {SP: pitcher, RP: pitcher, P: pitcher, default: hitter}
+roles:
+  hitter:
+    linear: {single: 3, double: 5, triple: 8, hr: 10, rbi: 2, run: 2, bb: 2, hbp: 2, sb: 5}
+  pitcher:
+    linear: {outs: 0.75, k: 2, win: 4, er: -2, h_allowed: -0.6, bb_allowed: -0.6, hbp_allowed: -0.6,
+             complete_game: 2.5, cg_shutout: 2.5, no_hitter: 5}

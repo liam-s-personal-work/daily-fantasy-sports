@@ -1,0 +1,53 @@
+{
+ "nfl": {
+  "default": {
+   "low_scale": 1.0,
+   "high_scale": 1.37,
+   "n": 1337
+  },
+  "DST": {
+   "low_scale": 0.67,
+   "high_scale": 1.16,
+   "n": 93
+  },
+  "QB": {
+   "low_scale": 0.8,
+   "high_scale": 1.38,
+   "n": 138
+  },
+  "RB": {
+   "low_scale": 1.0,
+   "high_scale": 1.39,
+   "n": 314
+  },
+  "TE": {
+   "low_scale": 1.0,
+   "high_scale": 1.43,
+   "n": 240
+  },
+  "WR": {
+   "low_scale": 1.0,
+   "high_scale": 1.35,
+   "n": 552
+  }
+ },
+ "_fit_weeks": [
+  [
+   2026,
+   3
+  ],
+  [
+   2026,
+   4
+  ],
+  [
+   2026,
+   5
+  ],
+  [
+   2026,
+   6
+  ]
+ ],
+ "_source": "fit on docs/results/forecast_experiment_2026_wk3-6_blind.csv (players who played)"
+}

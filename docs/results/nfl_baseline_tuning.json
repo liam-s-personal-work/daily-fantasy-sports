@@ -1,0 +1,1320 @@
+{
+ "protocol": "coordinate descent, one parameter at a time, 2024-2025 weeks 3-17 (30 weeks), DraftKings scoring, pool A (>=25% offensive snaps + all DST), 1000 simulations per player with common random numbers; 2026 never used",
+ "final_overrides": {
+  "half_life": 10.0,
+  "n0_td": 1.0,
+  "team_change_weight": 0.25,
+  "n0_ypt": 25.0,
+  "n0_ypc": 40.0,
+  "cross_affinity_carries": 0.3,
+  "n0_qb_ypc": 5.0,
+  "n0_qb_rush": 80.0,
+  "eff_half_life": 16.0,
+  "n0_carry": 15.0,
+  "usage_cv.QB": 0.06,
+  "usage_cv.RB": 0.2,
+  "usage_cv.WR": 0.38,
+  "eff_sd.WR": 0.08,
+  "eff_sd.TE": 0.08,
+  "carry_shape": 1.5
+ },
+ "passes": [
+  {
+   "name": "pass 1: usage, shrinkage, team model",
+   "objective": "mean of per-position MAE (QB/RB/WR/TE/DST); earlier DST actuals convention, so its values are not comparable with pass 2",
+   "history": [
+    {
+     "params": {},
+     "objective": 4.960060874511343
+    },
+    {
+     "params": {
+      "half_life": 2.5
+     },
+     "objective": 4.991184458244989
+    },
+    {
+     "params": {
+      "half_life": 3.0
+     },
+     "objective": 4.981720475572116
+    },
+    {
+     "params": {
+      "half_life": 6.0
+     },
+     "objective": 4.939582118810373
+    },
+    {
+     "params": {
+      "half_life": 8.0
+     },
+     "objective": 4.923380467351438
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_target": 10.0
+     },
+     "objective": 4.9283468863224265
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_target": 50.0
+     },
+     "objective": 4.938702062039735
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_target": 100.0
+     },
+     "objective": 4.956817459081476
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_carry": 10.0
+     },
+     "objective": 4.928318302026176
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_carry": 40.0
+     },
+     "objective": 4.940547977157626
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_carry": 80.0
+     },
+     "objective": 4.946652735028109
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0
+     },
+     "objective": 4.921924029038812
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 2.0
+     },
+     "objective": 4.925621307956329
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 8.0
+     },
+     "objective": 4.934562870155346
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 16.0
+     },
+     "objective": 4.942970780430062
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "td_actual_weight": 0.0
+     },
+     "objective": 4.925280111714149
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "td_actual_weight": 0.5
+     },
+     "objective": 4.9239883497907835
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "season_gap": 4.0
+     },
+     "objective": 4.927737271990576
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "season_gap": 16.0
+     },
+     "objective": 4.922117323739047
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "season_gap": 30.0
+     },
+     "objective": 4.937556564275866
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "exit_downweight": 0.15
+     },
+     "objective": 4.923023055046625
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "exit_downweight": 0.6
+     },
+     "objective": 4.92306747990983
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "exit_downweight": 1.0
+     },
+     "objective": 4.925765243974922
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25
+     },
+     "objective": 4.921437149330602
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 1.0
+     },
+     "objective": 4.921474941624716
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0
+     },
+     "objective": 4.920264259487521
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 100.0
+     },
+     "objective": 4.923084382262644
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 200.0
+     },
+     "objective": 4.924549380376352
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0
+     },
+     "objective": 4.919432231770872
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 160.0
+     },
+     "objective": 4.921177773093795
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 320.0
+     },
+     "objective": 4.921866486268298
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "n0_catch": 15.0
+     },
+     "objective": 4.921269682000487
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "n0_catch": 60.0
+     },
+     "objective": 4.9237418253464895
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "n0_qb_rush": 20.0
+     },
+     "objective": 4.923383243682059
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "n0_qb_rush": 80.0
+     },
+     "objective": 4.920296623178393
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "gamma": 0.75
+     },
+     "objective": 4.924304738565188
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "gamma": 1.5
+     },
+     "objective": 4.927343729993142
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_targets": 0.25
+     },
+     "objective": 4.922590903868377
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_targets": 1.0
+     },
+     "objective": 4.924501113009351
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.0
+     },
+     "objective": 4.922094939627211
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3
+     },
+     "objective": 4.91529868183319
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "team_half_life": 4.0
+     },
+     "objective": 4.924336114522167
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "team_half_life": 12.0
+     },
+     "objective": 4.920916801481779
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "team_half_life": 16.0
+     },
+     "objective": 4.920249449555958
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "team_k0": 4.0
+     },
+     "objective": 4.921098482176472
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "team_k0": 16.0
+     },
+     "objective": 4.918684201043178
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "lookback_seasons": 2
+     },
+     "objective": 4.9256356363771285
+    }
+   ]
+  },
+  {
+   "name": "pass 2: QB rushing, half-lives, prior strengths (after DST convention fix)",
+   "objective": "mean of per-position MAE (QB/RB/WR/TE/DST)",
+   "history": [
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3
+     },
+     "objective": 4.954234294481336
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0
+     },
+     "objective": 4.953193693789607
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 10.0
+     },
+     "objective": 4.953763240735806
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 40.0
+     },
+     "objective": 4.9545488614818645
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 10.0
+     },
+     "objective": 4.956306434151196
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 20.0
+     },
+     "objective": 4.954631775115705
+    },
+    {
+     "params": {
+      "half_life": 8.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0
+     },
+     "objective": 4.952293525843304
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0
+     },
+     "objective": 4.951361689323205
+    },
+    {
+     "params": {
+      "half_life": 12.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0
+     },
+     "objective": 4.952092395064116
+    },
+    {
+     "params": {
+      "half_life": 16.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0
+     },
+     "objective": 4.954232892422681
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 8.0
+     },
+     "objective": 4.952710374672537
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0
+     },
+     "objective": 4.949812270458569
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 32.0
+     },
+     "objective": 4.950319041719905
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 0.5,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0
+     },
+     "objective": 4.950676139715119
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 2.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0
+     },
+     "objective": 4.953634425443129
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "team_k0": 16.0
+     },
+     "objective": 4.954852802133102
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "team_k0": 32.0
+     },
+     "objective": 4.952213560866912
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_target": 15.0
+     },
+     "objective": 4.95107220906311
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_target": 35.0
+     },
+     "objective": 4.951345108473173
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0
+     },
+     "objective": 4.946851660401913
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 30.0
+     },
+     "objective": 4.956945125931851
+    }
+   ]
+  },
+  {
+   "name": "pass 3: distribution dispersion",
+   "objective": "mean of per-position pinball loss at p10/p50/p90",
+   "history": [
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0
+     },
+     "objective": 1.5594429637653566
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06
+     },
+     "objective": 1.5591163010392841
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.09
+     },
+     "objective": 1.559624769504023
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.16
+     },
+     "objective": 1.560290547598096
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.2
+     },
+     "objective": 1.5608613508397642
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2
+     },
+     "objective": 1.5584555137806502
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.25
+     },
+     "objective": 1.5584073818785409
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.36
+     },
+     "objective": 1.5600044377931332
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.42
+     },
+     "objective": 1.5623328099957103
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.22
+     },
+     "objective": 1.558685287323592
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.27
+     },
+     "objective": 1.5583734458057108
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38
+     },
+     "objective": 1.5578031318991084
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.44
+     },
+     "objective": 1.5596969380462435
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "usage_cv.TE": 0.26
+     },
+     "objective": 1.5579067940471711
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "usage_cv.TE": 0.31
+     },
+     "objective": 1.5589625888977925
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "usage_cv.TE": 0.42
+     },
+     "objective": 1.560985432876181
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "usage_cv.TE": 0.5
+     },
+     "objective": 1.5604554143086786
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.QB": 0.1
+     },
+     "objective": 1.5599258055277323
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.QB": 0.26
+     },
+     "objective": 1.560256557876703
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.RB": 0.1
+     },
+     "objective": 1.558289471769013
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.RB": 0.26
+     },
+     "objective": 1.5597254505869822
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08
+     },
+     "objective": 1.5573184368782955
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.22
+     },
+     "objective": 1.5574824690750533
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08
+     },
+     "objective": 1.5561893834107021
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.22
+     },
+     "objective": 1.5580110977983697
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "catch_shape": 1.0
+     },
+     "objective": 1.5586244997288117
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "catch_shape": 1.7
+     },
+     "objective": 1.5576305666752766
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "carry_shape": 0.8
+     },
+     "objective": 1.5594640674958904
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "carry_shape": 1.5
+     },
+     "objective": 1.556054007868325
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "carry_shape": 1.5,
+      "completion_shape": 1.2
+     },
+     "objective": 1.556802175521233
+    },
+    {
+     "params": {
+      "half_life": 10.0,
+      "n0_td": 1.0,
+      "team_change_weight": 0.25,
+      "n0_ypt": 25.0,
+      "n0_ypc": 40.0,
+      "cross_affinity_carries": 0.3,
+      "n0_qb_ypc": 5.0,
+      "n0_qb_rush": 80.0,
+      "eff_half_life": 16.0,
+      "n0_carry": 15.0,
+      "usage_cv.QB": 0.06,
+      "usage_cv.RB": 0.2,
+      "usage_cv.WR": 0.38,
+      "eff_sd.WR": 0.08,
+      "eff_sd.TE": 0.08,
+      "carry_shape": 1.5,
+      "completion_shape": 2.2
+     },
+     "objective": 1.5574735720300186
+    }
+   ]
+  }
+ ]
+}

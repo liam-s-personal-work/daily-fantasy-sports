@@ -1,0 +1,12 @@
+id: fanduel.mlb
+site: fanduel
+sport: mlb
+version: 2026-10-21
+verified: {status: partial, method: "fanduel.com/rules via search (cache ~2025-05)"}
+sources: [https://www.fanduel.com/rules]
+role_by_position: {P: pitcher, SP: pitcher, RP: pitcher, default: hitter}
+roles:
+  hitter:
+    linear: {single: 3, double: 6, triple: 9, hr: 12, rbi: 3.5, run: 3.2, bb: 3, sb: 6, hbp: 3}
+  pitcher:
+    linear: {win: 6, quality_start: 4, er: -3, k: 3, outs: 1}

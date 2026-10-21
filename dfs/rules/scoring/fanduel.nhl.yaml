@@ -1,0 +1,12 @@
+id: fanduel.nhl
+site: fanduel
+sport: nhl
+version: 2026-10-21
+verified: {status: partial, method: "fanduel.com/rules via search (cache ~2025-05)"}
+sources: [https://www.fanduel.com/rules]
+role_by_position: {G: goalie, default: skater}
+roles:
+  skater:
+    linear: {goal: 12, assist: 8, sog: 1.6, blk: 1.6, pp_point: 0.5, sh_point: 2}
+  goalie:
+    linear: {win: 12, goal_against: -4, save: 0.8, shutout: 8}

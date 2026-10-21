@@ -1,0 +1,61 @@
+# Gaussian-copula correlations between players' fantasy points, by relation and position
+# pair. NFL values follow within-pair DK-scoring correlations re-estimated on nflverse
+# 2021-25 (pooled z-scores; docs/research/projections.md): QB-WR1 .35, QB-WR2 .35,
+# QB-TE1 .28, QB-RB1 .06, WR1-WR2 .02, WR1-RB1 -.02, QB-opp WR1 .12, WR1-opp WR1 .08,
+# QB-opp QB .19. Several widely quoted published values (QB-RB1 .42, WR1-opp WR1 .56)
+# did not reproduce. DST rows are structural priors (a DST scores from the opposing
+# offense's failures).
+nfl:
+  same_team:
+    QB-WR: 0.35
+    QB-TE: 0.28
+    QB-RB: 0.06
+    WR-WR: 0.02
+    WR-TE: 0.00
+    TE-TE: -0.05
+    RB-WR: -0.02
+    RB-TE: -0.02
+    RB-RB: -0.20
+    RB-DST: 0.15
+    QB-DST: -0.05
+    WR-DST: -0.08
+    TE-DST: -0.05
+    QB-K: 0.15
+    RB-K: 0.10
+    WR-K: 0.05
+    TE-K: 0.05
+    K-DST: 0.10
+    default: 0.0
+  opponent:
+    QB-QB: 0.19
+    QB-WR: 0.12
+    QB-TE: 0.12
+    QB-RB: 0.05
+    WR-WR: 0.08
+    WR-TE: 0.06
+    RB-WR: 0.03
+    RB-RB: -0.05
+    DST-QB: -0.35
+    DST-WR: -0.22
+    DST-TE: -0.18
+    DST-RB: -0.18
+    DST-K: -0.20
+    DST-DST: -0.10
+    default: 0.03
+cfb:
+  same_team:
+    QB-WR: 0.40
+    QB-RB: 0.10
+    WR-WR: 0.05
+    RB-RB: -0.20
+    default: 0.0
+  opponent:
+    QB-QB: 0.20
+    QB-WR: 0.20
+    WR-WR: 0.12
+    default: 0.03
+nba:
+  same_team:
+    default: -0.05   # shared possessions: teammates' usage competes
+  opponent:
+    default: 0.08    # pace / overtime lift both sides

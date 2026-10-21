@@ -1,0 +1,12 @@
+id: fanduel.cfb
+site: fanduel
+sport: cfb
+version: 2026-10-21
+verified: {status: low, method: "fanduel.com/rules college section via search (cache ~2025-05); bonuses unconfirmed"}
+sources: [https://www.fanduel.com/rules]
+notes: ["Half PPR. Whether the 2024 NFL yardage bonuses apply to CFB is UNCONFIRMED (not applied here)."]
+role_by_position: {QB: offense, RB: offense, WR: offense, TE: offense, FB: offense}
+roles:
+  offense:
+    linear: {pass_yds: 0.04, pass_td: 4, int_thrown: -1, rush_yds: 0.1, rush_td: 6, rec: 0.5, rec_yds: 0.1, rec_td: 6,
+             return_td: 6, fumble_lost: -2, two_pt: 2, off_fumble_rec_td: 6}
