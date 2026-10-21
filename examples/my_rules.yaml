@@ -1,0 +1,10 @@
+# Your own pick rules. The engine solves them as a second lineup (upload_my_rules.csv) next to its own.
+# Names or player keys ("TEAM|name|POS") both work. Delete any line you do not need.
+lock: [Puka Nacua]               # must be in the lineup
+exclude: [Travis Kelce]          # never in the lineup
+exclude_teams: [NYJ]
+exclude_games: []                # e.g. ["MIA@NYJ"]
+max_from_team: 3
+min_salary: 49000                # spend at least this much
+stack:                           # at least `min` players from `team` at these positions
+  - {team: LA, positions: [QB, WR, TE], min: 2}
