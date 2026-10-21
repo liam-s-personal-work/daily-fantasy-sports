@@ -159,3 +159,66 @@ def test_fd_kickoffs_come_from_the_schedule():
     first = ko[c.games[0]]
     assert first == datetime(2026, 10, 25, 17, 0, tzinfo=timezone.utc)  # 1pm EDT
     assert ko[c.games[1]] == datetime(2026, 11, 1, 18, 0, tzinfo=timezone.utc)  # 1pm EST after the clock change
+
+
+def test_lastcall_covers_every_entry(cfg):
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    import json
+    lus = json.loads((res.run_dir / "report.json").read_text())["lineups"]
+    assert len(lus) == 3
+    final_keys = set(res.final.player_keys)
+    others = [i for i, lu in enumerate(lus) if {s["player_key"] for s in lu["slots"]} != final_keys]
+    assert others, "fixture should give at least one entry its own lineup"
+    i = others[-1]
+    mine = [s["player_key"] for s in lus[i]["slots"]]
+    locked_qb = res.contest.entries[0].current[0]
+    victim = next(k for k in mine if k not in final_keys and not any(
+        x.site_id == locked_qb for x in res.contest.candidates if x.player_key == k))
+    name = res.contest.players[victim].name
+    news = lambda t: {"updates": [{"player": name, "status": "out", "text": f"{name} ruled out"}]}
+    early = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
+    out = lastcall(res.run_dir, web=True, now=early, backend=fake(news=news), log=lambda s: None)
+    rows = list(csv.reader(open(res.run_dir / "upload_final.csv")))
+    assert len(rows) - 1 == 3  # every entry is in the final file
+    assert out["entries"]["repaired"] >= 1 and out["entries"]["could_not_repair"] == []
+    assert rows[1][4] == locked_qb  # entry 1's locked QB is untouched
+    by_id = {x.site_id: x.player_key for x in res.contest.candidates}
+    new_i = [by_id[x] for x in rows[i + 1][4:13]]
+    assert victim not in new_i
+    assert len(set(new_i) & set(mine)) >= len(mine) - 2  # a repair, not a rebuild
+
+
+def test_lastcall_reforecast_keeps_the_blind(cfg):
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+
+    def forecast(t):
+        keys = [k for k in c.players if k in t.prompt]
+        return {"game": t.name.split(":", 1)[1], "players": [
+            {"player_key": k, "low": 2.0, "likely": 9.0, "high": 20.0, "p_dnp": 0.02, "rationale": "x"} for k in keys]}
+
+    def research(t):  # every game gets one leaking fact and one clean fact
+        g = t.name.split(":", 1)[1]
+        p = next(x for x in c.players.values() if x.game == g and x.positions[0] == "WR")
+        facts = [{"subject": p.name, "team": p.team, "kind": "role", "text": f"{p.name} at a $7,800 salary is chalk",
+                  "source_url": "https://www.nfl.com/a", "as_of": "2026-10-24", "confidence": "high"},
+                 {"subject": p.name, "team": p.team, "kind": "role", "text": f"{p.name} named the slot starter",
+                  "source_url": "https://www.nfl.com/b", "as_of": "2026-10-24", "confidence": "high"}]
+        return {"game": g, "summary": "s", "facts": facts, "ruled_out": [], "doubtful_or_questionable": []}
+
+    be = fake()
+    be.handlers.update({"research": research, "forecast": forecast})
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=be, log=lambda s: None)
+    assert res.report and (res.run_dir / "forecasts.json").exists()
+    pick = res.final.slots[3].player_key
+    name = c.players[pick].name
+    news = lambda t: {"updates": [{"player": name, "status": "questionable", "text": f"{name} questionable, hamstring",
+                                   "source_url": "https://www.nfl.com/c"}]}
+    lc_be = fake(news=news)
+    lc_be.handlers["forecast"] = forecast
+    lastcall(res.run_dir, web=True, now=datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc), backend=lc_be,
+             log=lambda s: None)
+    prompts = [t.prompt for t in lc_be.calls if t.stage == "forecast"]
+    assert prompts, "the questionable pick should trigger a targeted re-forecast"
+    assert "$7,800" in (res.run_dir / "dossiers.json").read_text()  # the leak is in the research...
+    assert not any("$7,800" in x or "salary" in x for x in prompts)  # ...but never reaches the forecaster
+    assert any("named the slot starter" in x for x in prompts)

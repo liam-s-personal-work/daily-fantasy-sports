@@ -7,7 +7,10 @@ Rules (the user's):
 - change the lineup only if a pick is out, or a new lineup leads the current one by more than
   ``threshold`` (default 1%) on the contest objective. Both are scored in the same simulated
   outcomes (common random numbers), so simulation noise is not mistaken for a lead;
-- players whose games have started stay locked (late swap);
+- players whose games have started stay locked in their slots (late swap);
+- with an entries file every entry is checked: entries holding the main lineup follow the rules
+  above; every other entry that holds a ruled-out player gets the smallest legal repair (its other
+  picks kept);
 - hand over one final file.
 """
 
@@ -24,7 +27,7 @@ from dfs import strategy
 from dfs.io.upload import write_upload
 from dfs.llm.backend import Backend, Runner, default_backend
 from dfs.models import Contest, Forecast, GameDossier, Lineup, Projection
-from dfs.optimize.ilp import check_legal
+from dfs.optimize.ilp import Infeasible, SolveOptions, check_legal, solve
 from dfs.sim import simulate
 from dfs.stages import agents
 
@@ -40,9 +43,11 @@ def load_run(run_dir: Path) -> dict[str, Any]:
     report = j("report.json")
     final = Lineup.model_validate(report["final"])
     forecasts = {k: Forecast.model_validate(v) for k, v in j("forecasts.json").items()} if (run_dir / "forecasts.json").exists() else {}
-    baseline = {k: Projection.model_validate(v) for k, v in j("baseline.json")["projections"].items()}
+    base = j("baseline.json")
+    baseline = {k: Projection.model_validate(v) for k, v in base["projections"].items()}
     return {"contest": contest, "projections": projections, "dossiers": dossiers, "report": report, "final": final,
-            "forecasts": forecasts, "baseline": baseline, "config": report.get("config", {})}
+            "forecasts": forecasts, "baseline": baseline, "usage": base.get("usage") or {},
+            "config": report.get("config", {})}
 
 
 def lastcall(run_dir: Path, *, threshold: float = 0.01, web: bool = True, now: datetime | None = None,
@@ -63,7 +68,8 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     now = now or datetime.now(timezone.utc)
     runner = Runner(backend or default_backend(), cache_dir=run_dir.parent / "cache" / "llm",
                     budget_usd=float(cfg.get("lastcall_budget_usd", 4.0)), log=log)
-    picks = final.player_keys
+    entry_lus = [Lineup.model_validate(x) for x in st["report"].get("lineups") or []] or [final]
+    picks = list(dict.fromkeys(k for lu in [final, *entry_lus] for k in lu.player_keys))
 
     # 1. news on every pick (web) + any outs supplied by a structured refresh
     news: dict[str, dict] = {}
@@ -78,16 +84,21 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     if c.rules.sport == "nfl" and affected and st["forecasts"]:
         group = {k for k in proj if any(c.players[k].team == c.players[a].team and
                                         c.players[k].positions[0] == c.players[a].positions[0] for a in affected)}
+        from dfs.pipeline import agents_blind
         games = {c.players[k].game for k in group}
-        facts = {g: d for g, d in st["dossiers"].items() if g in games}
+        # the same blind as the main forecast: no prices, lines or fantasy points in any fact
+        facts = {g: d.model_copy(update={"facts": [f for f in d.facts if agents_blind(f)]})
+                 for g, d in st["dossiers"].items() if g in games}
         for k, u in news.items():  # news becomes citable facts
             g = c.players[k].game
             if g in facts:
-                facts[g].facts.append(agents.Fact(id=f"{g}.N{len(facts[g].facts) + 1}", subject=c.players[k].name,
-                                                  team=c.players[k].team, kind="status", text=u.get("text", ""),
-                                                  source_url=u.get("source_url"), as_of=u.get("as_of"), confidence="high"))
+                f = agents.Fact(id=f"{g}.N{len(facts[g].facts) + 1}", subject=c.players[k].name,
+                                team=c.players[k].team, kind="status", text=u.get("text", ""),
+                                source_url=u.get("source_url"), as_of=u.get("as_of"), confidence="high")
+                if agents_blind(f):
+                    facts[g].facts.append(f)
         sub = c.model_copy(update={"games": sorted(g for g in games if g)})
-        ft = agents.forecast_tasks(sub, facts, {}, {}, group - out, model=cfg.get("forecast_model", "opus"))
+        ft = agents.forecast_tasks(sub, facts, st["usage"], {}, group - out, model=cfg.get("forecast_model", "opus"))
         refreshed, _ = agents.parse_forecasts(await runner.run_all(ft), set(c.players))
         if refreshed:
             newp = blend_mod.blend({k: st["baseline"][k] for k in refreshed if k in st["baseline"]}, refreshed,
@@ -97,10 +108,17 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     for k in out:  # an inactive player is not scored at zero: he is removed
         proj.pop(k, None)
 
-    # 3. late swap: started games are locked
-    locked = {s.player_key for s in final.slots
-              if c.players[s.player_key].start_time and c.players[s.player_key].start_time <= now}
-    started = {k for k, p in c.players.items() if p.start_time and p.start_time <= now} - locked
+    # 3. late swap: players whose games have started stay in their slots
+    def has_started(k: str) -> bool:
+        t = c.players[k].start_time
+        return bool(t and t <= now)
+
+    def slot_locks(lu: Lineup) -> dict[int, str]:
+        return {i: s.site_id for i, s in enumerate(lu.slots) if has_started(s.player_key)}
+
+    started_all = {k for k in c.players if has_started(k)}
+    locked = {s.player_key for s in final.slots if has_started(s.player_key)}
+    started = started_all - locked
     keys, sims = simulate(proj, c.players, c.rules.sport, n_sims=int(cfg.get("n_sims", 10000)),
                           seed=int(cfg.get("seed", 11)))
     fm = strategy.field_for(c, proj, kind=c.kind, seed=int(cfg.get("seed", 11)))
@@ -112,13 +130,8 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     if current_ok:
         strategy.evaluate([cur], keys, sims, fm, target)
     res = strategy.best_lineups(c, proj, keys, sims, fm, kind=c.kind, target_top=float(cfg.get("target_top", 0.023)),
-                                exclude=started | out, seed=int(cfg.get("seed", 11)))
+                                exclude=started | out, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
     new = res["lineups"][0]
-    if locked:  # keep locked slots fixed: re-solve with them locked if the best lineup moved any
-        if not locked <= set(new.player_keys):
-            from dfs.optimize.ilp import SolveOptions, solve
-            new = solve(c, {k: p.mean for k, p in proj.items()}, SolveOptions(lock_keys=locked, exclude_keys=started | out))
-            strategy.evaluate([new], keys, sims, fm, target)
 
     lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
     # The lead must beat both the user's 1% bar and the simulation's own noise (2 standard errors).
@@ -130,8 +143,38 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     problems = check_legal(c, chosen)
     if problems:
         raise RuntimeError(f"last-call lineup is not legal: {problems}")
-    path = write_upload(c, [chosen], run_dir / "upload_final.csv", only_changed=False)
+
+    # 4. every entry: those holding the final lineup follow the decision above; the others are
+    #    repaired only if a pick is out (their own locked cells and started players stay put)
+    means = {k: p.mean for k, p in proj.items()}
+    repaired, unrepaired, final_lus = 0, [], []
+    for i, lu in enumerate(entry_lus):
+        if lu.player_keys == final.player_keys:
+            final_lus.append(chosen)
+            continue
+        bad = set(lu.player_keys) & out
+        if not bad:
+            final_lus.append(lu)
+            continue
+        keep = set(lu.player_keys) - bad
+        fixed = None
+        for lock in (keep, set()):  # smallest change first, then any legal lineup around the started picks
+            try:
+                fixed = solve(c, means, SolveOptions(slot_locks=slot_locks(lu), lock_keys=lock - started_all,
+                                                     exclude_keys=(started_all - set(lu.player_keys)) | out,
+                                                     time_limit_s=10), label=f"entry {i + 1} repaired")
+                break
+            except Infeasible:
+                continue
+        if fixed is None or check_legal(c, fixed):
+            unrepaired.append(i + 1)
+            final_lus.append(lu)
+        else:
+            repaired += 1
+            final_lus.append(fixed)
+    path = write_upload(c, final_lus, run_dir / "upload_final.csv", only_changed=False)
     summary = {"now": now.isoformat(), "news": news, "out": sorted(out), "affected": sorted(affected),
+               "entries": {"n": len(final_lus), "repaired": repaired, "could_not_repair": unrepaired},
                "reforecast": sorted(refreshed), "locked": sorted(locked), "changed": change,
                "reason": ("a pick is out" if not current_ok else f"new lineup leads by {lead:.1%}" if change
                           else f"no change (best alternative leads by {lead:.1%} <= {threshold:.0%})"),
