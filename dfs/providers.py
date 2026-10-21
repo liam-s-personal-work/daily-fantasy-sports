@@ -36,6 +36,9 @@ class SlateContext:
     ruled_out: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
     data_source: str = "site CSV"
+    ids: dict[str, str] = field(default_factory=dict)  # player_key -> stats-source id (for grading)
+    season: int | None = None
+    week: int | None = None
 
 
 def status_out(status: str | None) -> bool:

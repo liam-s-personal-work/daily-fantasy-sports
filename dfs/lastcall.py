@@ -103,13 +103,13 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     keys, sims = simulate(proj, c.players, c.rules.sport, n_sims=int(cfg.get("n_sims", 10000)),
                           seed=int(cfg.get("seed", 11)))
     fm = strategy.field_for(c, proj, kind=c.kind, seed=int(cfg.get("seed", 11)))
-    top_line, cash_line = strategy.field_lines(fm, keys, sims, float(cfg.get("target_top", 0.023)))
+    target = float(cfg.get("target_top", 0.023))
     metric = "p_cash" if c.kind.value == "cash" else "p_top"
 
     current_ok = not (set(picks) & out)
     cur = final.model_copy(deep=True)
     if current_ok:
-        strategy.evaluate([cur], keys, sims, top_line, cash_line, fm)
+        strategy.evaluate([cur], keys, sims, fm, target)
     res = strategy.best_lineups(c, proj, keys, sims, fm, kind=c.kind, target_top=float(cfg.get("target_top", 0.023)),
                                 exclude=started | out, seed=int(cfg.get("seed", 11)))
     new = res["lineups"][0]
@@ -117,10 +117,14 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         if not locked <= set(new.player_keys):
             from dfs.optimize.ilp import SolveOptions, solve
             new = solve(c, {k: p.mean for k, p in proj.items()}, SolveOptions(lock_keys=locked, exclude_keys=started | out))
-            strategy.evaluate([new], keys, sims, top_line, cash_line, fm)
+            strategy.evaluate([new], keys, sims, fm, target)
 
     lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
-    change = (not current_ok) or lead > threshold
+    # The lead must beat both the user's 1% bar and the simulation's own noise (2 standard errors).
+    n_s = sims.shape[0]
+    se = (sum(m.get(metric, 0.0) * (1 - m.get(metric, 0.0)) for m in (new.metrics, cur.metrics)) / n_s) ** 0.5
+    noise_ok = (new.metrics.get(metric, 0.0) - cur.metrics.get(metric, 0.0)) > 2 * se
+    change = (not current_ok) or (lead > threshold and noise_ok)
     chosen = new if change else cur
     problems = check_legal(c, chosen)
     if problems:

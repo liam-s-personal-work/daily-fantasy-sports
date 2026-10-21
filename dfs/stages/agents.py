@@ -220,9 +220,18 @@ def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[st
     return out
 
 
+def _hard_out(facts: list[Fact]) -> bool:
+    return any(f.kind in ("injury", "status") and OUT_WORDS.search(f.text) for f in facts)
+
+
 def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
-                     dossiers: dict[str, GameDossier]) -> tuple[set[str], dict]:
-    """Return (keys to exclude, report). Only fact-backed removals and cuts are accepted."""
+                     dossiers: dict[str, GameDossier], priced: set[str] = frozenset()) -> tuple[set[str], dict]:
+    """Return (keys to exclude, report). Only fact-backed removals and cuts are accepted.
+
+    Novelty rule: a cut needs a fact the forecaster did NOT already price in (``priced``), unless
+    the fact is a hard availability one (out / inactive / IR / suspended). Otherwise the same
+    information would count twice.
+    """
     excluded: set[str] = set()
     report = {"accepted": [], "rejected": [], "weakest_pick": output.get("weakest_pick"),
               "close_calls": output.get("close_calls", []), "preferred_draft": output.get("preferred_draft")}
@@ -238,9 +247,12 @@ def apply_strategist(output: dict, idx: dict[str, Fact], contest: Contest,
     for item in output.get("cuts", []):
         k = item.get("player_key")
         facts = _verified(item.get("fact_ids", []), idx, k, contest) if k in contest.players else []
-        if facts:
+        new = [f for f in facts if f.id not in priced]
+        if facts and (new or _hard_out(facts)):
             excluded.add(k)
             report["accepted"].append({"cut": k, "facts": [f.id for f in facts], "reason": item.get("reason")})
+        elif facts:
+            report["rejected"].append({"cut": k, "why": "facts already priced in by the forecaster (no new information)"})
         else:
             report["rejected"].append({"cut": k, "why": "cited facts missing, low-confidence or not about the player"})
     return excluded, report
@@ -257,8 +269,10 @@ def checker_task(contest: Contest, lu: Lineup, dossiers: dict[str, GameDossier],
                      schema=schemas.CHECKER, max_turns=4, timeout_s=900)
 
 
-def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Lineup) -> tuple[bool, set[str], dict]:
-    """Code decides: fail only on a blocker that is about availability/role and is fact-backed."""
+def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Lineup,
+                    priced: set[str] = frozenset()) -> tuple[bool, set[str], dict]:
+    """Code decides: fail only on a fact-backed blocker about availability or role. Role claims
+    need a fact the forecaster had not priced in; hard outs always count."""
     fails: set[str] = set()
     notes = []
     picks = set(lu.player_keys)
@@ -267,7 +281,10 @@ def checker_verdict(output: dict, idx: dict[str, Fact], contest: Contest, lu: Li
         if k not in picks:
             continue
         backed = _verified(a.get("fact_ids", []), idx, k, contest)
-        decisive = a.get("severity") == "blocker" and a.get("claim") in ("not_playing", "limited_or_role_cut") and backed
+        claim = a.get("claim")
+        new = [f for f in backed if f.id not in priced]
+        decisive = a.get("severity") == "blocker" and bool(backed) and (
+            (claim == "not_playing" and (_hard_out(backed) or bool(new))) or (claim == "limited_or_role_cut" and bool(new)))
         if decisive:
             fails.add(k)
         notes.append({"player": k, "claim": a.get("claim"), "severity": a.get("severity"),

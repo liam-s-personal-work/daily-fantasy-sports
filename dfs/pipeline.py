@@ -172,9 +172,17 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     # 2. baseline + structured facts
     provider = provider_for(contest, cfg)
     ctx: SlateContext = provider.prepare(contest, now=now)
-    _save(run_dir, "baseline.json", {"source": ctx.data_source, "notes": ctx.notes,
-                                     "ruled_out": ctx.ruled_out, "projections": ctx.baseline})
+    _save(run_dir, "baseline.json", {"source": ctx.data_source, "notes": ctx.notes, "season": ctx.season,
+                                     "week": ctx.week, "ids": ctx.ids, "ruled_out": ctx.ruled_out,
+                                     "projections": ctx.baseline, "market": ctx.market, "usage": ctx.usage})
     clock.mark(f"baseline ({ctx.data_source}): {len(ctx.baseline)} players, {len(ctx.ruled_out)} ruled out")
+    try:  # a legal safety lineup within the first minutes, in case anything later fails or runs long
+        safety = solve(contest, {k: p.mean for k, p in ctx.baseline.items() if k not in ctx.ruled_out},
+                       SolveOptions(time_limit_s=20), label="safety (baseline mean)")
+        write_upload(contest, [safety] * max(1, len(contest.entries)), run_dir / "upload_safety.csv", only_changed=False)
+        clock.mark(f"safety lineup written (mean {safety.mean:.1f})")
+    except Exception as e:  # never block the run on the safety net
+        log(f"safety lineup failed: {e}")
 
     # 3. research
     dossiers: dict[str, GameDossier] = {}
@@ -198,8 +206,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     # 4-6. prune, forecast, blend
     pool = prune_pool(contest, ctx, flagged=set())
     forecasts = {}
+    priced: set[str] = set()
     if cfg.forecaster and sport in FOOTBALL and pool:
         blinded = {g: d.model_copy(update={"facts": [f for f in d.facts if agents_blind(f)]}) for g, d in dossiers.items()}
+        priced = {f.id for d in blinded.values() for f in d.facts}
         ftasks = agents.forecast_tasks(contest, blinded, ctx.usage, {}, pool - out_keys, model=cfg.forecast_model,
                                        timeout_s=max(120.0, min(900.0, clock.left() * 0.3)))
         forecasts, problems = agents.parse_forecasts(await runner.run_all(ftasks), set(contest.players))
@@ -215,7 +225,7 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
 
     # 7-11. decide (simulate, drafts, strategist/backup, solve, checker loop, user rules)
     decider = Decider(contest, projections, cfg, runner, dossiers, log=log, n_lineups=max(1, len(contest.entries)),
-                      now=now or datetime.now(timezone.utc))
+                      now=now or datetime.now(timezone.utc), priced=priced if forecasts else set())
     decision = await decider.decide()
     clock.mark(f"decision: {decision.final.label} mean {decision.final.mean:.1f}")
 

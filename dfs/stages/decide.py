@@ -35,7 +35,7 @@ class Decision:
 class Decider:
     def __init__(self, contest: Contest, projections: dict[str, Projection], cfg, runner,
                  dossiers: dict[str, GameDossier], log: Callable[[str], None] = print,
-                 n_lineups: int = 1, now=None):
+                 n_lineups: int = 1, now=None, priced: set[str] = frozenset()):
         self.c = contest
         self.proj = projections
         self.cfg = cfg
@@ -47,6 +47,7 @@ class Decider:
         self.sport = contest.rules.sport
         self.kind = contest.kind
         self.report: dict[str, Any] = {}
+        self.priced = set(priced)  # fact ids the forecaster already saw
         # Players whose games have started can no longer be added (late swap); locked cells stay.
         self.started = {k for k, p in contest.players.items() if now and p.start_time and p.start_time <= now}
 
@@ -83,7 +84,7 @@ class Decider:
         # Three drafts, each built alone from the blended numbers under a different lens.
         drafts = sel.three_drafts(c, self.proj, self.keys, self.sims, self.field, target_top=cfg.target_top,
                                   seed=cfg.seed)
-        top3 = sel.top_candidates_by_slot(c, self.proj, self.keys, self.sims, n_draws=min(300, cfg.n_sims), k=3)
+        top3 = sel.top_candidates_by_slot(c, self.proj, k=3, seed=cfg.seed, fm=self.field)
         self.report["drafts"] = [d.model_dump() for d in drafts]
         self.report["top3_by_slot"] = top3
         top3_text = sel.format_top3(c, top3)
@@ -99,7 +100,7 @@ class Decider:
                                           model=cfg.backup_model, backup=True)
         strat, backup = await asyncio.gather(self.runner.run(strat_t), self.runner.run(backup_t))
         if strat.ok:
-            excluded, srep = agents.apply_strategist(strat.output, self.idx, c, self.dossiers)
+            excluded, srep = agents.apply_strategist(strat.output, self.idx, c, self.dossiers, self.priced)
             self.report["strategist"] = {"raw": strat.output, "applied": srep}
         else:
             main_ok = False
@@ -119,7 +120,7 @@ class Decider:
                 main_ok = False
                 checks.append({"attempt": attempt, "error": chk.error})
                 break
-            passed, fails, notes = agents.checker_verdict(chk.output, self.idx, c, final)
+            passed, fails, notes = agents.checker_verdict(chk.output, self.idx, c, final, self.priced)
             checks.append({"attempt": attempt, "passed": passed, "failed_picks": sorted(fails), **notes})
             if passed:
                 break
