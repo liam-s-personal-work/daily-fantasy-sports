@@ -21,7 +21,9 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 from forecast_experiment import week_pool  # noqa: E402
 
-from dfs.blend import blend
+from datetime import datetime, timezone
+
+from dfs.blend import LEARNED_DIR, blend, load_calibration, load_learned, unless_fit_on
 from dfs.llm.backend import Runner, SDKBackend
 from dfs.models import Projection
 from dfs.pipeline import agents_blind
@@ -38,12 +40,13 @@ async def main_async(a) -> None:
     if a.games:
         keep = set(a.games.split(","))
         contest = contest.model_copy(update={"games": [g for g in contest.games if g in keep]})
-    market, known, usage, sfacts = NFLProvider()._facts(contest, data, a.season, a.week, pool)
+    now = datetime.now(timezone.utc)
+    market, known, usage, sfacts = NFLProvider()._facts(contest, data, a.season, a.week, pool, now=now)
     runner = Runner(SDKBackend(), cache_dir=Path("runs/cache/llm"), budget_usd=a.budget, concurrency=a.concurrency,
                     log=print)
     marks = {"setup": round(time.monotonic() - t0, 1)}
-    res = await runner.run_all(agents.research_tasks(contest, known, market, max_searches=a.searches))
-    dossiers = agents.parse_research(res)
+    res = await runner.run_all(agents.research_tasks(contest, known, market, max_searches=a.searches, now=now))
+    dossiers = agents.parse_research(res, now=now)
     for g in contest.games:
         d = dossiers.get(g) or agents.structured_dossier(g, [], [])
         start = len(d.facts)
@@ -60,8 +63,11 @@ async def main_async(a) -> None:
             for _, r in pool.iterrows() if r["player_key"] in contest.players
             and contest.players[r["player_key"]].game in contest.games}
     out_keys = agents.ruled_out_keys(contest, dossiers)
+    learned = unless_fit_on(load_learned(LEARNED_DIR / "blend.json"), a.season, a.week)
+    calib = unless_fit_on(load_calibration(LEARNED_DIR / "calibration.json"), a.season, a.week)
     proj = blend({k: v for k, v in base.items() if k not in out_keys},
-                 {k: v for k, v in forecasts.items() if k not in out_keys}, contest.players, "nfl")
+                 {k: v for k, v in forecasts.items() if k not in out_keys}, contest.players, "nfl",
+                 learned=learned, calib=calib)
     rows = [{"player": contest.players[k].name, "team": contest.players[k].team, "pos": contest.players[k].positions[0],
              "game": contest.players[k].game, "mean": round(p.mean, 2), "p10": round(p.p10, 1), "p90": round(p.p90, 1),
              "baseline": round(base[k].mean, 2) if k in base else None,
@@ -72,6 +78,9 @@ async def main_async(a) -> None:
     (out / "dossiers.json").write_text(json.dumps({g: d.model_dump() for g, d in dossiers.items()}, indent=1))
     marks["total"] = round(time.monotonic() - t0, 1)
     lines = [f"# Live projections: {a.season} week {a.week} (DraftKings scoring)", "",
+             f"Run {now:%Y-%m-%d %H:%M} UTC, before the week's first kickoff: web research + blinded forecasts + "
+             f"nflverse baseline, blended with the learned per-position weights "
+             f"({'used' if learned else 'priors: learned weights were fit on this week'}).", "",
              f"Games: {len(contest.games)}; facts gathered: {sum(len(d.facts) for d in dossiers.values())}; "
              f"ruled out by research: {len(out_keys)}; forecasts: {len(forecasts)} (problems: {len(problems)})",
              f"Timing (s): {marks}", f"Model calls: {runner.summary()}", ""]

@@ -33,11 +33,18 @@ dfs backtest --season 2026 --weeks 3-6          # NFL baseline accuracy on real 
 
 Useful `run` flags:
 
+- `--kind cash|gpp`: the contest type. Salary files do not say which; entries files are read from contest
+  names.
 - `--no-web`: structured data only, no web research.
 - `--no-forecast`: baseline only.
 - `--budget`: hard dollar cap, default $15.
 - `--deadline`: minutes, default 55.
+- `--now`: test on a past slate as of a time before its kickoff. Web research then stays off unless you
+  pass `--allow-lookahead`, because it would see the results.
 - `--replay`: answer every model stage from cache.
+
+`dfs lastcall runs/<id> --entries DKEntries.csv` checks against a freshly downloaded entries file, whose
+locked cells are the site's own record.
 
 Pick rules (`--rules`) are a small YAML file; see [examples/my_rules.yaml](examples/my_rules.yaml).
 

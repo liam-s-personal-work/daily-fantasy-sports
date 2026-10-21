@@ -55,8 +55,9 @@ It never logs in to, scrapes or automates DraftKings or FanDuel. You download an
 ```
 dfs parse    DKEntries.csv                        # what was detected, and every warning (no model calls)
 dfs run      DKEntries.csv --rules my_rules.yaml  # -> runs/<id>/upload.csv, upload_my_rules.csv, report.md
+             [--kind cash|gpp]                    #    (salary files do not say which; entries files do)
 dfs windows  runs/<id>                            # when to run the last call for each kickoff window
-dfs lastcall runs/<id>                            # -> runs/<id>/upload_final.csv
+dfs lastcall runs/<id> [--entries DKEntries.csv]  # -> runs/<id>/upload_final.csv (fresh entries file optional)
 dfs grade    runs/<id> [--standings contest-standings.csv]
 ```
 
@@ -93,16 +94,16 @@ Progress is tracked two ways:
 |---|---|---|
 | Read the contest from the entries file and saved rules | `dfs/io/contest_file.py` detects DK salary, entries and template files, and FD player-list and entries-template files. `dfs/rules/registry/contests.yaml` holds the cap, slots, limits and multipliers, each with a confidence level. Late-swap locked cells in an entries file are kept as they are | As specified. Formats were checked against **13 real DK/FD 2026 exports**. The CSVs never contain the cap or team limits, so those live in the registry and are cross-checked against the file on every run |
 | Learn the scoring | `dfs/scoring.py` + `dfs/rules/scoring/*.yaml` | Scoring is a stored table, not something an agent "learns" at run time: no tokens and no mistakes. DK NFL scores reproduce DK-published 2026 lineup scores exactly. DST rules were checked against all 20 team averages in real 2026 DK and FD files |
-| Research every game, allowed sites only | One Sonnet agent per game, with web search and a checklist (injury report, practice, role changes, weather, suspensions). It is given the known structured facts (official injury report, depth chart, usage) so it only searches for what is missing | Allowed sources are enforced in code (`dfs/sources.py`): page fetches outside an allow-list are denied by the Agent SDK permission layer, and facts sourced from DFS sites or no-automation sites are dropped |
+| Research every game, allowed sites only | One Sonnet agent per game, with web search and a checklist (injury report, practice, role changes, weather, suspensions). It is given the known structured facts (official injury report, depth chart, usage) so it only searches for what is missing. Every fact carries a source, a date and an availability status | Allowed sources are enforced in code (`dfs/sources.py`). Page fetches outside an allow-list are denied by the Agent SDK permission layer. Facts from DFS, pick'em, betting or no-automation sites are dropped, and so are facts dated after the run's time. A "ruled out" claim counts only with a fact that proves it |
 | Baseline: NFL game logs adjusted by betting lines; college season averages adjusted for workload; remove anyone ruled out | **NFL:** a top-down model. Implied team points give team volume; usage shares and efficiency are shrunk; stat lines are simulated and scored; availability comes from the injury report. **College:** season averages adjusted for recent workload share and the game line | As specified, but point-in-time and as a distribution (p10/p50/p90 plus the chance of not playing). Tuned on 2024–25 only and tested on 2026 (§6.2–6.3) |
-| Fresh forecasts (football), blind to prices, site averages, past scores | One Opus agent per game. Code enforces the blind: the packet has no salary, average or fantasy-point fields, and any free-text fact that mentions prices, lines, odds or fantasy points is dropped | Betting lines are hidden too. The baseline already uses them, so hiding them keeps the forecast an independent signal. The `market` experiment (§6.4) tested that choice |
-| Blend: NFL 85/15, college 100%, other sports baseline leads | `dfs/blend.py` uses quantile averaging. Your weights are the **priors**; per-position weights learned from graded games replace them as evidence builds, shrunk toward the prior | **Changed by evidence.** On 1,517 graded 2026 player-games the forecaster helps, but the error-minimising weight is about 0.5 overall, high for QBs and near 0 for TEs and DST (§6.4). A fixed 85% is wrong for TEs and DST |
+| Fresh forecasts (football), blind to prices, site averages, past scores | One Opus agent per game. Code enforces the blind. The packet has no salary, average or fantasy-point fields, and no research summary or URL. Any fact that mentions prices, lines, odds or fantasy points is dropped. Game-day inactives appear only once they are announced | Betting lines are hidden too. The baseline already uses them, so hiding them keeps the forecast an independent signal. The `market` experiment (§6.4) tested that choice |
+| Blend: NFL 85/15, college 100%, other sports baseline leads | `dfs/blend.py` uses quantile averaging. Your weights are the **priors**; per-position weights learned from graded games replace them as evidence builds, shrunk toward the prior | **Changed by evidence.** On 1,557 graded 2026 player-games (leak-free), a fixed 85% does worse than the baseline alone. The learned per-position weights (0.25–0.72) do best (§6.4) |
 | Three independent drafts | The solver builds three drafts from the blended numbers: a cash lens (floor), a tournament lens (P(top x%)) and a leverage lens (least-owned near the best) | Drafts are built by the solver. Three identical deterministic solves would be pointless, and lineups written by an LLM are not reliably legal |
 | Strategist: can't change a number; removes non-players; explains close calls; names the weakest pick; cuts only by citing a fact; solver builds the best legal lineup | Exactly that, with citation checks in code and a **novelty rule**: a cut needs a fact the forecaster had not already priced in, unless the player is a hard out or inactive | The solver's objective is the contest's (tournament or cash), not raw points |
 | Checker attacks every pick; code decides; ≤2 revisions | A fresh Opus checker. Code fails a pick only on a cited blocker about availability or a new role fact; at most 2 revisions | As specified |
 | Backup review that may adjust numbers, run alongside | Sonnet, in parallel. Its multipliers are bounded at 0.5–1.3 and each needs a cited fact. Its lineup ships only if the main path fails technically, or still fails the checker after 2 revisions | Precedence made explicit |
 | My rules → second lineup, I choose | `UserRules` (lock, exclude, team and game excludes, max per team, stacks, min salary) is solved separately and written to `upload_my_rules.csv`. See `examples/my_rules.yaml` | As specified |
-| Last hour: news on every pick, inactives, NFL re-forecast only affected players, change only if a pick is out or a new lineup leads by >1%, one final file | `dfs/lastcall.py`. Started games stay locked (late swap). The 1% is measured on the contest objective in the same simulations and must also exceed 2 standard errors of simulation noise | Run once per kickoff window (`dfs windows`), because inactives come out about 90 minutes before each kickoff |
+| Last hour: news on every pick, inactives, NFL re-forecast only affected players, change only if a pick is out or a new lineup leads by >1%, one final file | `dfs/lastcall.py`. Every entry in the file is checked. Started players stay in their slots (late swap). The 1% is measured on the contest objective in the same simulations and must also exceed 2 standard errors of simulation noise. News from blocked sites is ignored, and a failed news check is reported, never silent | Run once per kickoff window (`dfs windows`), because inactives come out about 90 minutes before each kickoff |
 | Grade vs best possible lineup, name the failed step, fix it, update the blend | `dfs/grading_run.py` computes actual points and the hindsight optimum. It scores the lineup after each step (baseline numbers, blended numbers, contest objective plus strategist, checker, final, last call) and the alternatives (forecast-only numbers, each draft). It reports the percentile against the real field (with a standings file) or the simulated field, and updates the blend | The hindsight optimum is reported but treated as a diagnostic, because it mostly measures luck. Engine changes should follow player-level evidence, not one slate |
 
 Some additions were not in your draft; a top-2.3% objective needs them:
@@ -188,17 +189,25 @@ training cutoff, so the forecaster cannot remember the outcomes.
 
 | | DK MAE | FD MAE |
 |---|---:|---:|
-| this model | **5.00** | **4.50** |
-| best naive baseline (expected fantasy points) | 5.33 | 4.79 |
-| season average | 5.70 | |
-| last 3 games | 5.66 | |
+| this model | **4.99** | **4.50** |
+| best naive baseline (expected fantasy points) | 5.31 | 4.77 |
+| season average | 5.68 | |
+| last 3 games | 5.64 | |
 
 The model beats every naive baseline at every position (QB, RB, WR, TE, DST, K):
 
-- DK: −0.33 points per player, 95% interval −0.49 to −0.16.
-- QBs: −0.96 points against the best baseline.
-- With availability included (injured regulars count as 0): MAE 4.49 against 5.70.
+- DK: −0.32 points per player, 95% interval −0.48 to −0.13.
+- FD: −0.27 points per player, 95% interval −0.41 to −0.11.
+- QBs: about −0.8 points against the best baseline.
+- With availability included (injured regulars count as 0): MAE 4.43 against 5.69.
 - 80% intervals cover 82% of outcomes.
+
+A review of the baseline found and fixed real defects, each with a regression test. Together they cut
+the QB starting-probability error (Brier score) in half on 2026 games:
+
+- the QB start chain;
+- depth-chart-aware availability for starters returning from injury;
+- return fumbles in scoring.
 
 ### 6.3 College football baseline (`docs/results/cfb_baseline_backtest.md`)
 
@@ -209,95 +218,142 @@ The model beats every naive baseline at every position (QB, RB, WR, TE, DST, K):
 
 | | MAE |
 |---|---:|
-| this model | **6.27** (QB 8.73, RB 6.37, WR 5.95, TE 4.23) |
+| this model | **6.28** (QB 8.72, RB 6.38, WR 5.96, TE 4.25) |
 | season average | 7.03 |
 | last game | 8.21 |
 
-- 10–90% coverage is 83.1%.
-- Fantasy points rebuilt from play-by-play are within 1 point of the official box score for 97.1% of 2026
+- 10–90% coverage is 82.1%.
+- The review fixed a look-ahead leak: bowl games were counted as week-1 history for every regular-season
+  week. It also fixed team-row parsing and slate matching. The numbers above are after the refit.
+- Fantasy points rebuilt from play-by-play are within 1 point of the official box score for 97.4% of 2026
   player-games.
 
 ### 6.4 The blinded forecaster, and your 85/15 split
 
-**Protocol:**
+**Protocol** (`docs/results/forecast_experiment_2026_wk3-6_blind.md`):
 
-- the forecaster ran blind on 2026 weeks 3–6: 61 calls, $7.12;
-- 1,517 graded player-games;
-- results re-scored against the tuned baseline in
-  `docs/results/forecast_experiment_2026_wk3-6_blind_rescored.md`.
+- the forecaster ran blind on 2026 weeks 3–6, game by game, from point-in-time structured facts only
+  (official injury report, depth chart, usage in raw stats): 61 calls, $7.17;
+- 1,557 graded player-games, scored against actual DraftKings points;
+- web research was off, because searching today would surface the results;
+- 2026 is after the model's training cutoff, so it cannot remember the games.
 
-**Findings:**
+**A leak found and fixed on the way.** The first run of this experiment showed the forecaster each
+player's game-day inactive status, which the NFL publishes 90 minutes before kickoff. All of its
+apparent edge came from 39 such rows. Those files are kept as `*_v1_inactives_leak*`. Inactive status now
+appears only from 90 minutes before each kickoff, and the numbers below come from the clean re-run.
 
-- **The forecaster adds real information.** Its MAE is lower than the baseline's by 0.12 points (95%
-  team-week bootstrap interval −0.20 to −0.03).
-- **The best weight is about 0.5, not 0.85.** The weight that minimises error (encompassing regression)
-  is 0.51 overall and varies by position:
+**Findings, on what the lineup is scored on (each player's mean, chance of not playing included):**
 
-  | Position | n | Baseline MAE | Forecast MAE | Best forecast weight |
-  |---|---:|---:|---:|---:|
-  | QB | 244 | 3.77 | **3.49** | 0.85 |
-  | WR | 595 | 4.53 | **4.38** | 0.54 |
-  | RB | 353 | 4.38 | **4.17** | 0.47 |
-  | TE | 234 | **4.44** | 4.61 | 0.00 |
-  | DST | 91 | **3.60** | 3.77 | 0.08 |
+| Position | n | Baseline MAE | Forecast MAE | 50/50 blend MAE | Best forecast weight |
+|---|---:|---:|---:|---:|---:|
+| all | 1,557 | 4.20 | 4.21 | **4.17** | 0.20 |
+| QB | 244 | **3.36** | 3.51 | 3.41 | 0.08 |
+| RB | 366 | 4.34 | 4.20 | 4.21 | 0.33 |
+| WR | 610 | 4.46 | 4.43 | 4.43 | 0.37 |
+| TE | 244 | **4.34** | 4.58 | 4.44 | 0.00 |
+| DST | 93 | 3.71 | **3.59** | 3.61 | 0.43 |
 
-- **What the engine does with this.** It starts from your priors and moves toward the measured weights,
-  shrunk toward the prior (`data/learned/blend.json`). Every graded slate updates them.
-- **Showing it betting lines didn't help.** A variant that let the forecaster see betting lines (weeks
-  5–6, 748 player-games) gained no clear accuracy (−0.10, interval −0.21 to +0.02). The blind stays.
-- **Calibration.** The forecaster's 80% ranges cover 77.5% (too narrow at the top). Per-position widening
-  fit on these weeks is stored in `data/learned/calibration.json`.
+- **On its own, the forecaster is no more accurate than the corrected baseline.** The difference is
+  +0.007 points, 95% interval −0.07 to +0.08.
+- **Blended, it adds a little.**
+  - The 50/50 blend has the lowest MAE.
+  - The forecaster ranks players better: within-position rank correlation 0.523 vs 0.490.
+  - It is much better on how a QB scores when he plays: 5.75 vs 6.94.
+- **Your 85% is too high.** With calibrated forecasts, a fixed 85/15 blend has a higher squared error than
+  the baseline alone: RMSE 6.016 vs 5.975.
+- **The learned weights win, narrowly.** Per position, shrunk toward your 85%
+  (`data/learned/blend.json`, rebuilt by `scripts/fit_learned.py`), they have the lowest squared error,
+  5.946:
+
+  | QB | RB | WR | TE | DST |
+  |---:|---:|---:|---:|---:|
+  | 0.48 | 0.59 | 0.62 | 0.25 | 0.72 |
+
+  Squared error is the right loss here, because a lineup's value is the sum of means. Every graded slate
+  refines the weights.
+- **What this test cannot see.** The forecaster's real advantage should be web research, which the
+  baseline never has: news, role changes, beat reporters. That can't be tested on past games without
+  seeing the results. It will show up, or not, in graded live slates.
+- **Betting lines.** A variant that let the forecaster see them (weeks 5–6) gained no clear accuracy. The
+  blind stays. Caveat: that variant ran before the inactives fix.
+- **Calibration.** The forecaster's 80% ranges cover 77% of outcomes, too short at the top. Per-position
+  widening is in `data/learned/calibration.json`; the top half is stretched about 1.4×.
+- **No peeking.** Both learned files record the weeks they were fit on, and a run of those weeks ignores
+  them.
 
 ### 6.5 Whole-pipeline replays on real site files (`docs/results/replays.md`)
 
 **Setup:**
 
 - five real 2026 DK/FD slates, run end to end with live agents as of the morning of the games;
+- the current engine, after every fix in §9;
 - web research off, because searching today would surface the results;
 - your prior weights and raw forecaster ranges, because the learned values were fit on these weeks.
 
-**Results:**
+| Slate | Wall clock | Cost | Lineup | Best possible | Beat sim. field | Sim. top-2.3% cut |
+|---|---:|---:|---:|---:|---:|---:|
+| DK classic, wk 6 main (10 games) | 214 s | $1.63 | 145.5 | 236.3 | 97% | 146.6 |
+| DK classic, wk 3 main (13 games) | 228 s | $1.79 | 151.1 | 256.8 | 95% | 157.8 |
+| DK showdown, wk 6 DAL@GB | 101 s | $0.28 | 87.1 | 117.3 | 78% | 105.4 |
+| FD classic, wk 6 main (10 games) | 154 s | $1.53 | 130.8 | 215.2 | 95% | 140.2 |
+| FD single game, wk 1 NE@SEA | 97 s | $0.27 | 42.6 | 95.1 | 33% | 73.6 |
 
-- **Timing:** 85–214 s per slate.
-- **Cost:** $0.24–$1.72 in model calls.
-- **Legality:** every final lineup passed the independent legality check.
-- **Against the simulated field:** the lineups beat 83% and 93% of it on the two DK main slates, 61% on FD
-  main, and 35–37% on the two single-game slates.
-- **Top-2.3% cut:** none reached it.
+- **Legality:** every lineup passed the independent legality check.
+- **Top-2.3% cut:** none reached it; the DK week 6 lineup missed by 1.2 points.
+- **Steps:** the contest-objective step (with the strategist) added points on four of five slates.
+- **Before the fixes:** the same slates scored 122.5 / 146.6 / 70.3 / 109.3 / 43.0.
 
-Five slates are noise at the lineup level, so this shows the machinery works, not an edge. The evidence
-that the forecasts are good is the player-level evidence above.
+Five slates are noise at the lineup level, so this shows the machinery works, not an edge. Proving an
+edge takes graded slates by the hundred (§2).
 
 ### 6.6 Live, before the games (`docs/results/live_week7_projections.md`)
 
-**Setup:** NFL week 7 (14 games), run on 2026-10-21 before Thursday's game, with live web research and the
-blinded forecaster.
+**Setup:** NFL week 7, all 14 games, run on 2026-10-21 (16:58 UTC) before Thursday's first kickoff. It used
+live web research, the blinded forecaster and the learned blend weights.
 
 **Results:**
 
-- 92 cited facts, 355 forecasts;
-- **251 s** wall clock for research and forecasting together;
-- **$3.54**.
+- 48 web searches, 82 cited facts (each with an availability status), 364 forecasts, no parse problems;
+- **228 s** wall clock for research and forecasting together;
+- **$3.48**.
 
-These projections were committed before kickoff, so they can be graded honestly next week.
+**The blind in action:**
+
+- Two research summaries mentioned betting lines, and three facts mentioned prices or lines.
+- None of that reached the forecaster: it never sees summaries, and those facts were dropped.
+
+**The first live run.** An earlier run the same morning, before the review fixes, did pass three summaries
+with lines to the forecaster. It is kept as `live_week7_projections_v1.md` for the record.
+
+These projections were committed before kickoff, so they can be graded honestly once the week is played.
 
 ### 6.7 Engine tests
 
-- **Test suite:** 235 offline tests pass (`python -m pytest -q`).
+- **Test suite:** 324 offline tests pass (`python -m pytest -q`).
 - **Solver:**
   - it matches brute force on a small slate;
   - its rules hold on showdown, FD single game, FD max-per-team, locks and excludes, and late swap;
   - the candidate pruner was exact in 360 random solves.
 - **Distributions:** they reproduce their quantiles and moments.
-- **Simulation:** it reproduces the target correlations, and its PSD repair is checked.
+- **Simulation:** starters keep the measured stack correlations exactly; backups get a quarter of them. No
+  repair is needed on real slates (smallest eigenvalue about 0.21).
 - **Uploads:** the files written for DK salary files, DK entries (locked cells kept) and FD entries
   re-parse.
-- **Blind:** facts that leak prices, lines or fantasy points are dropped.
+- **Blind:**
+  - dozens of real-world phrasings of prices, lines and fantasy scores are dropped;
+  - real facts are kept;
+  - no research summary or URL reaches the forecaster.
 - **Agent stages:**
   - a strategist cut or a checker blocker without a verified fact is ignored;
   - a failed strategist hands over to the backup;
   - the backup's adjustments stay bounded;
-  - the last call swaps only when a pick is out, and keeps started players.
+  - the last call swaps only when a pick is out, keeps started players in their slots, and covers every
+    entry.
+- **Late swap:**
+  - "In Progress" / "Final" games are locked;
+  - started players are never moved or added;
+  - a slate with too few open games is built around the locked entries.
 - **Adversarial review:** the review covered file formats, mathematics, leakage, agent logic and
   compliance. Each finding was reproduced by a second agent before it counted (§9).
 
@@ -305,33 +361,49 @@ These projections were committed before kickoff, so they can be graded honestly 
 
 | Part | Measured | Where |
 |---|---|---|
-| Parse + baseline + safety lineup | 15–20 s | replays |
-| Research + blinded forecasts, 14-game main slate (pipelined, 6 at a time) | 251 s, $3.54 | live week 7 |
-| Drafts, strategist, checker, backup, field model, final | 70–200 s, $0.25–$1.70 | replays |
-| Last call per kickoff window | about 1–2 min, under $1 | `dfs lastcall` |
+| Parse + baseline + safety lineup | 10–25 s | replays |
+| Research + blinded forecasts, 14-game main slate (pipelined, 6 at a time) | 228 s, $3.48 | live week 7 |
+| Field model, drafts, strategist, checker, backup, final | 55–120 s | replays |
+| Whole run without web research (replays) | 97–228 s, $0.27–$1.79 | replays |
+| 150-entry portfolio, real DK file (all reviews failing over) | 74 s in total | stress test |
+| Last call per kickoff window | 35 s, $0.10 (showdown, 3 searches) | `dfs lastcall` |
 
 A full main slate is roughly **8–10 minutes and $4–6**, well inside the 60-minute and $15 limits.
 
 **The limits are enforced in code:**
 
-- **Budget:** a hard dollar cap; each agent also has its own budget and timeout.
-- **Deadline:** stages shrink to fit it.
+- **Budget:** a hard dollar cap.
+  - Each agent call may spend only its share of what is left.
+  - Calls that time out are charged.
+- **Deadline:** a hard stop for agent calls. They end about 4 minutes early, leaving time for the solver
+  and the files.
 - **Safety lineup:** written in the first minute, so a legal upload exists even if something later fails.
 
 ## 8. Known limits
 
+- **The forecaster's edge is not proven.**
+  - On leak-free past games it is no better than the statistical baseline on its own, and helps only a
+    little in the blend (§6.4).
+  - Its expected advantage, live web research, can only be measured on live slates. Grade every slate.
 - **Saved rules.** The rules for several game types are medium or low confidence. They are marked in the
   registry and printed as warnings. Confirm the cap and slots from the contest's rules page once per game
   type.
-- **Other sports.** NBA, MLB, NHL, golf, MMA and NASCAR run on the site-average baseline plus research.
-  They have no stats adapter yet, so expect much weaker projections than in football.
+- **Other sports.**
+  - NBA, MLB, NHL, golf, MMA and NASCAR run on the site-average baseline plus research. They have no
+    stats adapter yet, so expect much weaker projections than in football.
+  - FanDuel files carry no kickoff times outside the NFL, so late swap there cannot tell which games have
+    started. The engine says so; don't re-upload after the first game starts.
+- **Upload headers.**
+  - Upload files written from a plain player list use the saved slot names.
+  - For FanDuel, and for DK college football, download the site's own entries or upload template and run
+    on that. Its header is then used exactly.
 - **College.** No betting lines are available for upcoming college games in the open data, so the
   game-environment factor is off unless you pass lines. Sacks are counted in QB rushing (the NCAA
   convention), which is not yet confirmed against a DK/FD college box score.
 - **NFL baseline:**
   - it has no player props;
   - backup QBs are projected as if they start;
-  - its 80% bands are slightly too wide below and slightly too narrow above.
+  - when a backup QB starts, his team's passing volume still comes from history with the usual starter.
 - **The simulated field is a model.** Its P(top 2.3%) is optimistic because it assumes our projections
   are right; the real measure is graded results against the site's standings file.
 - **Research.** In this build environment most sports news sites are blocked, so research relies on web
@@ -343,4 +415,31 @@ A full main slate is roughly **8–10 minutes and $4–6**, well inside the 60-m
 
 ## 9. Adversarial review
 
-Findings and fixes are listed in `docs/results/code_review.md`.
+The finished engine was attacked from five angles by independent reviewers:
+
+- contest files and uploads;
+- optimisation and statistics;
+- information leakage;
+- agent decisions;
+- compliance and operations.
+
+Every reviewer had to demonstrate each defect by running code, and a second agent re-ran each finding.
+
+**78 findings:** 14 critical, 33 major, 31 minor. All were fixed, except one that could not happen and one
+that is documented as a limit. `docs/results/code_review.md` lists each finding with its outcome.
+
+The most important:
+
+- **Forecaster blind breached.** The research summary, and the betting line it was given, reached the
+  blinded forecaster.
+- **Game-day inactives leaked into the experiment.** Fixing this turned the forecaster's measured edge
+  into roughly none (§6.4).
+- **Late swap could produce illegal uploads.** Started players could be moved, dropped or added, and DK's
+  "In Progress" markers were ignored.
+- **NHL defensemen merged.** All of a team's defensemen became one player.
+- **DK MLB's 5-hitter limit was not enforced.**
+- **Fact matching hit the wrong player.** A teammate's fact could cut a player ("Kyle Allen inactive"
+  cutting Josh Allen).
+- **Cuts without facts.** The backup review and the research agent's "ruled out" list could remove
+  players without citing a fact.
+- **The last call covered only the first entry.**
