@@ -1,0 +1,17 @@
+id: draftkings.nascar
+site: draftkings
+sport: nascar
+version: 2026-10-21
+verified: {status: low, method: "Stokastic / RotoWire 2023 summaries"}
+sources: [https://www.stokastic.com/articles/dfs-strategy/nascar-dfs-scoring-explained]
+role_by_position: {default: driver}
+roles:
+  driver:
+    linear: {place_differential: 1.0, fastest_lap: 0.45, lap_led: 0.25}
+    tiers:
+      finish_position: [[1, 1, 45], [2, 2, 42], [3, 3, 41], [4, 4, 40], [5, 5, 39], [6, 6, 38], [7, 7, 37], [8, 8, 36],
+                        [9, 9, 35], [10, 10, 34], [11, 11, 32], [12, 12, 31], [13, 13, 30], [14, 14, 29], [15, 15, 28],
+                        [16, 16, 27], [17, 17, 26], [18, 18, 25], [19, 19, 24], [20, 20, 23], [21, 21, 21], [22, 22, 20],
+                        [23, 23, 19], [24, 24, 18], [25, 25, 17], [26, 26, 16], [27, 27, 15], [28, 28, 14], [29, 29, 13],
+                        [30, 30, 12], [31, 31, 10], [32, 32, 9], [33, 33, 8], [34, 34, 7], [35, 35, 6], [36, 36, 5],
+                        [37, 37, 4], [38, 38, 3], [39, 39, 2], [40, 40, 1], [41, null, 0]]

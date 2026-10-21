@@ -1,0 +1,11 @@
+id: draftkings.nba
+site: draftkings
+sport: nba
+version: 2026-10-21
+verified: {status: partial, method: "DK-owned 2025 NBA DFS guide + DK Pick6 (see docs/research/scoring.md)"}
+sources: [https://dknetwork.draftkings.com/2025/10/17/nba-daily-fantasy-101-how-to-play-dfs-on-draftkings/]
+role_by_position: {default: player}
+roles:
+  player:
+    linear: {pts: 1, fg3m: 0.5, reb: 1.25, ast: 1.5, stl: 2, blk: 2, tov: -0.5}
+    multi_cat: {categories: [pts, reb, ast, blk, stl], at_least: 10, bonuses: [[2, 1.5], [3, 3]], cumulative: true}

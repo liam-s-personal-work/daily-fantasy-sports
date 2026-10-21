@@ -116,3 +116,26 @@ def score(stats: Mapping[str, Any], table_id: str, role: str | None = None,
         if earned:
             pts += sum(earned) if mc.get("cumulative") else max(earned)
     return round(pts + 1e-9, 2)
+
+
+def describe(table_id: str, roles: list[str] | None = None) -> str:
+    """Plain-text rendering of a scoring table for agent prompts."""
+    table = load_table(table_id)
+    lines = []
+    for role, block in table["roles"].items():
+        if roles and role not in roles:
+            continue
+        parts = [f"{k} {v:+g}" for k, v in (block.get("linear") or {}).items()]
+        parts += [f"bonus {t['pts']:+g} at {t['stat']} >= {t['gte']}" for t in block.get("thresholds") or []]
+        for stat, bands in (block.get("tiers") or {}).items():
+            parts.append(f"{stat}: " + ", ".join(
+                f"{lo}{'+' if hi is None else '-' + str(hi)} -> {pts:+g}" for lo, hi, pts in bands))
+        for stat, bands in (block.get("buckets") or {}).items():
+            parts.append(f"each {stat[:-1] if stat.endswith('s') else stat}: " + ", ".join(
+                f"{lo}{'+' if hi is None else '-' + str(hi)} -> {pts:+g}" for lo, hi, pts in bands))
+        mc = block.get("multi_cat")
+        if mc:
+            parts.append(f"bonuses when {', '.join(mc['categories'])} reach {mc.get('at_least', 10)}: "
+                         + ", ".join(f"{k} categories {p:+g}" for k, p in mc["bonuses"]))
+        lines.append(f"{role}: " + "; ".join(parts))
+    return "\n".join(lines)

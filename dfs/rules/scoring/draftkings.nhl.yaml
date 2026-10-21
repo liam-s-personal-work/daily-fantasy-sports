@@ -1,0 +1,19 @@
+id: draftkings.nhl
+site: draftkings
+sport: nhl
+version: 2026-10-21
+verified: {status: partial, method: "DK-owned 2025 NHL guide + DK Pick6 NHL table"}
+sources: [https://dknetwork.draftkings.com/2025/09/30/nhl-daily-fantasy-101-how-to-play-dfs-on-draftkings/]
+role_by_position: {G: goalie, default: skater}
+roles:
+  skater:
+    linear: {goal: 8.5, assist: 5, sog: 1.5, blk: 1.3, sh_point: 2, shootout_goal: 1.5}
+    thresholds:
+      - {stat: goal, gte: 3, pts: 3}
+      - {stat: sog, gte: 5, pts: 3}
+      - {stat: blk, gte: 3, pts: 3}
+      - {stat: points, gte: 3, pts: 3}
+  goalie:
+    linear: {win: 6, save: 0.7, goal_against: -3.5, shutout: 4, ot_loss: 2}
+    thresholds:
+      - {stat: save, gte: 35, pts: 3}

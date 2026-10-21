@@ -1,0 +1,10 @@
+id: fanduel.nba
+site: fanduel
+sport: nba
+version: 2026-10-21
+verified: {status: partial, method: "fanduel.com/rules via search (cache ~2025-05)"}
+sources: [https://www.fanduel.com/rules]
+role_by_position: {default: player}
+roles:
+  player:
+    linear: {pts: 1, reb: 1.2, ast: 1.5, blk: 3, stl: 3, tov: -1}

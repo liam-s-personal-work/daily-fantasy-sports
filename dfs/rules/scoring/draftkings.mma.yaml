@@ -1,0 +1,13 @@
+id: draftkings.mma
+site: draftkings
+sport: mma
+version: 2026-10-21
+verified: {status: low, method: "RotoWire review of DK MMA scoring (~2021); not reconfirmed in 2026"}
+sources: [https://www.rotowire.com/mma/article.php?id=54707]
+role_by_position: {default: fighter}
+roles:
+  fighter:
+    linear: {strike: 0.2, significant_strike: 0.2, control_seconds: 0.03, takedown: 5, reversal: 5, knockdown: 10,
+             quick_win: 25}
+    tiers:
+      win_round: [[0, 0, 0], [1, 1, 90], [2, 2, 70], [3, 3, 45], [4, 5, 40], [6, 6, 30]]  # 6 = decision win

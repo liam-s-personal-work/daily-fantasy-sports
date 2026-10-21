@@ -122,6 +122,7 @@ class Contest(BaseModel):
 class Fact(BaseModel):
     """One sourced fact from research. Facts, never opinions, cross the research boundary."""
 
+    id: str = ""  # run-unique, e.g. "BUF@MIA.F3"; agents cite these
     subject: str  # player name, team abbreviation, or "game"
     team: str | None = None
     kind: str  # injury | status | role | usage | depth_chart | matchup | weather | narrative | line

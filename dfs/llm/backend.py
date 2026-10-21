@@ -79,15 +79,22 @@ class SDKBackend:
     async def run(self, task: AgentTask) -> AgentResult:
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
+        from dfs.sources import FETCH_ALLOW_DOMAINS
+
+        # "dontAsk": any tool use not pre-approved here is denied by the harness. Page fetches
+        # are approved only for allow-listed domains; search goes through the server-side tool.
+        allowed = [t for t in task.tools if t != "WebFetch"]
+        if "WebFetch" in task.tools:
+            allowed += [f"WebFetch(domain:{d})" for d in FETCH_ALLOW_DOMAINS]
         opts = ClaudeAgentOptions(
             model=MODELS.get(task.model, task.model),
             system_prompt=task.system,
             tools=list(task.tools),
-            allowed_tools=list(task.tools),
+            allowed_tools=allowed,
             max_turns=task.max_turns,
             output_format={"type": "json_schema", "schema": task.schema},
             setting_sources=[],
-            permission_mode="bypassPermissions",
+            permission_mode="dontAsk",
             cwd=self.workdir,
             max_budget_usd=task.max_budget_usd,
             **({"effort": task.effort} if task.effort else {}),

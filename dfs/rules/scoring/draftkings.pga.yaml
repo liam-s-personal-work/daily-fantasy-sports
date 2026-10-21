@@ -1,0 +1,15 @@
+id: draftkings.pga
+site: draftkings
+sport: pga
+version: 2026-10-21
+verified: {status: partial, method: "DK-owned 2024 golf guide; hole-in-one and tie rules UNCONFIRMED"}
+sources: [https://dknetwork.draftkings.com/2024/03/07/how-to-play-golf-dfs-tips-beginners-guide-to-daily-fantasy-golf-on-draftkings/]
+role_by_position: {default: golfer}
+roles:
+  golfer:
+    linear: {double_eagle: 13, eagle: 8, birdie: 3, par: 0.5, bogey: -0.5, double_bogey_or_worse: -1,
+             birdie_streak_rounds: 3, bogey_free_rounds: 3, all_rounds_under_70: 5}
+    tiers:
+      finish_position: [[1, 1, 30], [2, 2, 20], [3, 3, 18], [4, 4, 16], [5, 5, 14], [6, 6, 12], [7, 7, 10], [8, 8, 9],
+                        [9, 9, 8], [10, 10, 7], [11, 15, 6], [16, 20, 5], [21, 25, 4], [26, 30, 3], [31, 40, 2],
+                        [41, 50, 1], [51, null, 0]]
