@@ -119,3 +119,20 @@ def test_lastcall_keeps_started_players(cfg):
     out = lastcall(res.run_dir, web=True, now=mid, backend=fake(news=news), log=lambda s: None)
     assert started_picks <= set(out["final"].player_keys)
     assert victim not in out["final"].player_keys
+
+
+def test_safety_upload_keeps_locked_cells(cfg):
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    rows = list(csv.reader(open(res.run_dir / "upload_safety.csv")))
+    assert len(rows) - 1 == len(res.contest.entries)
+    assert rows[1][4] == res.contest.entries[0].current[0]  # locked QB kept in the safety file too
+
+
+def test_run_stops_cleanly_when_every_game_started(cfg):
+    from dfs.pipeline import SlateStarted
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+    late = max(p.start_time for p in c.players.values() if p.start_time) + timedelta(hours=1)
+    be = fake()
+    with pytest.raises(SlateStarted):
+        run(FIX / "dk_salaries_classic.csv", cfg, backend=be, log=lambda s: None, now=late)
+    assert be.calls == []  # nothing spent

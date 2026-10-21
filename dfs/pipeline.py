@@ -41,6 +41,34 @@ from dfs.stages.decide import Decider
 FOOTBALL = {"nfl", "cfb"}
 
 
+class SlateStarted(RuntimeError):
+    """Every game in the file has kicked off: nothing can be entered or swapped any more."""
+
+
+def entry_lock_groups(contest: Contest) -> dict[tuple, list[int]]:
+    """Entry rows grouped by their locked cells ((slot index, site id), ...); unlocked rows share ()."""
+    groups: dict[tuple, list[int]] = {}
+    for i, e in enumerate(contest.entries):
+        locks = tuple((j, sid) for j, (sid, lk) in enumerate(zip(e.current, e.locked)) if lk and sid)
+        groups.setdefault(locks, []).append(i)
+    return groups
+
+
+def safety_lineups(contest: Contest, points: dict[str, float], started: set[str]) -> list[Lineup]:
+    """One legal lineup per entry row (one in total without entries): started players are not added,
+    and each entry's locked cells stay where they are."""
+    if not contest.entries:
+        return [solve(contest, points, SolveOptions(time_limit_s=20, exclude_keys=set(started)),
+                      label="safety (baseline mean)")]
+    out: list[Lineup | None] = [None] * len(contest.entries)
+    for locks, idx in entry_lock_groups(contest).items():
+        lu = solve(contest, points, SolveOptions(time_limit_s=20, exclude_keys=set(started), slot_locks=dict(locks)),
+                   label="safety (baseline mean)")
+        for i in idx:
+            out[i] = lu
+    return [lu for lu in out if lu is not None]
+
+
 @dataclass
 class RunConfig:
     out_dir: Path = Path("runs")
@@ -163,6 +191,13 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     for w in contest.warnings:
         log(f"WARNING: {w}")
     _save(run_dir, "contest.json", contest)
+    t_now = now or datetime.now(timezone.utc)
+    started = {k for k, p in contest.players.items() if p.start_time and p.start_time <= t_now}
+    if contest.players and len(started) == len(contest.players):
+        first = min(p.start_time for p in contest.players.values())
+        raise SlateStarted(f"every game in this file has already started (first kickoff {first:%Y-%m-%d %H:%M %Z}, "
+                           f"now {t_now:%Y-%m-%d %H:%M %Z}); nothing can be entered or swapped. To test on a past "
+                           "slate, pass --now with a time before its first kickoff.")
     clock.mark(f"read contest: {contest.rules.site.value} {contest.rules.sport} {contest.rules.game_type}, "
                f"{len(contest.players)} players, {len(contest.games)} games, {len(contest.entries)} entries")
 
@@ -178,10 +213,10 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
                                      "projections": ctx.baseline, "market": ctx.market, "usage": ctx.usage})
     clock.mark(f"baseline ({ctx.data_source}): {len(ctx.baseline)} players, {len(ctx.ruled_out)} ruled out")
     try:  # a legal safety lineup within the first minutes, in case anything later fails or runs long
-        safety = solve(contest, {k: p.mean for k, p in ctx.baseline.items() if k not in ctx.ruled_out},
-                       SolveOptions(time_limit_s=20), label="safety (baseline mean)")
-        write_upload(contest, [safety] * max(1, len(contest.entries)), run_dir / "upload_safety.csv", only_changed=False)
-        clock.mark(f"safety lineup written (mean {safety.mean:.1f})")
+        safety = safety_lineups(contest, {k: p.mean for k, p in ctx.baseline.items() if k not in ctx.ruled_out},
+                                started)
+        write_upload(contest, safety, run_dir / "upload_safety.csv", only_changed=False)
+        clock.mark(f"safety lineup written (mean {safety[0].mean:.1f})")
     except Exception as e:  # never block the run on the safety net
         log(f"safety lineup failed: {e}")
 

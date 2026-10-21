@@ -165,10 +165,8 @@ class Decider:
         entries = self.c.entries
         if not entries:
             return [final]
-        groups: dict[tuple, list[int]] = {}
-        for i, e in enumerate(entries):
-            locks = tuple((j, sid) for j, (sid, lk) in enumerate(zip(e.current, e.locked)) if lk and sid)
-            groups.setdefault(locks, []).append(i)
+        from dfs.pipeline import entry_lock_groups
+        groups = entry_lock_groups(self.c)
         out: list[Lineup | None] = [None] * len(entries)
         for locks, idx in groups.items():
             if not locks and len(idx) == 1:

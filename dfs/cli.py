@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -54,7 +55,10 @@ def _run(args) -> int:
                     web_research=not args.no_web, forecaster=not args.no_forecast, n_sims=args.sims,
                     target_top=args.target_top, field_size=args.field_size, user_rules=_user_rules(args.rules),
                     season=args.season, week=args.week, replay_only=args.replay)
-    res = run(args.file, cfg)
+    now = datetime.fromisoformat(args.now) if args.now else None
+    if now is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    res = run(args.file, cfg, now=now)
     print(f"\nupload file: {res.upload_path}")
     if res.rules_upload_path:
         print(f"lineup with your rules: {res.rules_upload_path}")
@@ -109,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--rules", help="YAML file with your pick rules (solved as a second lineup)")
     s.add_argument("--season", type=int); s.add_argument("--week", type=int)
     s.add_argument("--replay", action="store_true", help="answer model stages from cache only")
+    s.add_argument("--now", help="ISO time to run as (e.g. 2026-10-18T16:00:00+00:00); default: the real time")
     s.set_defaults(fn=_run)
 
     s = sub.add_parser("lastcall"); s.add_argument("run_dir"); s.add_argument("--threshold", type=float, default=0.01)
@@ -123,7 +128,14 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("backtest"); s.add_argument("rest", nargs=argparse.REMAINDER); s.set_defaults(fn=_backtest)
 
     args = p.parse_args(argv)
-    return args.fn(args)
+    from dfs.io.contest_file import ContestFileError
+    from dfs.optimize.ilp import Infeasible
+    from dfs.pipeline import SlateStarted
+    try:
+        return args.fn(args)
+    except (SlateStarted, Infeasible, ContestFileError, FileNotFoundError) as e:
+        print(f"dfs {args.cmd}: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
