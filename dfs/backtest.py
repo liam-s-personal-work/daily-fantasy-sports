@@ -28,7 +28,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from dfs.data import nflverse as nv
-from dfs.projections.nfl import NFLData, NFLParams, build_context, offense_stat_line, project_context
+from dfs.projections.nfl import NFLData, NFLParams, build_context, offense_stat_line, player_means, project_context
 from dfs.scoring import score
 
 TABLES = ("draftkings.nfl", "fanduel.nfl")
@@ -112,10 +112,13 @@ def dst_stat_line(row: pd.Series, table_id: str) -> dict:
 # --------------------------------------------------------------------------- naive baselines
 
 
-def naive_baselines(data: NFLData, season: int, week: int, ids: pd.Series, table_id: str) -> pd.DataFrame:
+def naive_baselines(data: NFLData, season: int, week: int, ids: pd.Series, table_id: str,
+                    positions: pd.Series | None = None) -> pd.DataFrame:
     """Season-to-date average, last-3-games average and ff_opportunity expected-points average,
     from games strictly before (season, week). Players without a game this season fall back to
-    last season's average, then to the position's median season-to-date average."""
+    last season's average, then to the position's median season-to-date average. ``positions``
+    (aligned with ``ids``) supplies the position of players with no game in either season, who
+    would otherwise get 0."""
     pg = nv.before(data.player_games, season, week, min_season=season - 1)
     pg = pg[(pg["offense_pct"].fillna(0) > 0) | ((pg["targets"] + pg["carries"] + pg["attempts"]) > 0)]
     fp = pg[f"fp_{table_id}"]
@@ -132,6 +135,9 @@ def naive_baselines(data: NFLData, season: int, week: int, ids: pd.Series, table
     out["base_last3"] = l3.reindex(out.index)
     med = std.join(pos).groupby("pos")[["_fp", "_xfp"]].median()
     p = pos.reindex(out.index)
+    if positions is not None:
+        given = pd.Series(np.asarray(positions, dtype=object), index=np.asarray(ids, dtype=object))
+        p = p.fillna(given.groupby(level=0).first().reindex(out.index))
     for col, src in (("base_std", "_fp"), ("base_xfp", "_xfp"), ("base_last3", "_fp")):
         out[col] = out[col].fillna(p.map(med[src])).fillna(0.0)
     return out
@@ -181,6 +187,7 @@ def evaluate_week(data: NFLData, season: int, week: int, params: NFLParams | Non
         cand = players.reset_index()
         b_ids = top_ids(cand, "mean")
         if with_baselines:
+            # selection uses real history only (no position-median fill: a player without games is no "top" player)
             cand = cand.join(naive_baselines(data, season, week, cand["key"], t)["base_std"], on="key")
             b_ids |= top_ids(cand, "base_std")
         b_ids -= set(a["gsis_id"])
@@ -201,7 +208,7 @@ def evaluate_week(data: NFLData, season: int, week: int, params: NFLParams | Non
         rows.loc[~rows["projected"], ["played_mean", "mean", "p10", "p50", "p90"]] = 0.0
         rows.loc[~rows["projected"], "p_play"] = 0.0
         if with_baselines:
-            rows = rows.join(naive_baselines(data, season, week, rows["gsis_id"], t), on="gsis_id")
+            rows = rows.join(naive_baselines(data, season, week, rows["gsis_id"], t, rows["pos"]), on="gsis_id")
         # DST
         d = f[f["kind"] == "dst"].set_index("team")
         wk = tg[(tg["season"] == season) & (tg["week"] == week) & tg["played"]].set_index("team")
@@ -350,6 +357,33 @@ def bootstrap_mae_diff(res: pd.DataFrame, a: str, b: str, n_boot: int = 4000, se
     return float(point), float(lo), float(hi)
 
 
+def availability_metrics(data: NFLData, season: int, weeks: Iterable[int], params: NFLParams | None = None) -> pd.DataFrame:
+    """Pre-game P(logs an offensive snap) for non-QBs and P(starts) for QBs over every rostered pool
+    player (rows already fixed at 0 by status or an Out designation are left out): n, mean forecast,
+    observed rate, Brier score and log loss. A start = at least half the team's pass attempts."""
+    rows = []
+    pg = data.player_games
+    for w in weeks:
+        m = player_means(build_context(data, season, w, params))
+        act = pg[(pg["season"] == season) & (pg["week"] == w)]
+        played = set(act.loc[act["offense_pct"].fillna(1.0) > 0, "gsis_id"])
+        started = set(act.loc[(act["pos"] == "QB") & (act["attempts"] >= 0.5 * act["team_attempts"].clip(lower=1)),
+                              "gsis_id"])
+        is_qb = (m["pos"] == "QB").to_numpy()
+        y = np.where(is_qb, m["gsis_id"].isin(started), m["gsis_id"].isin(played)).astype(float)
+        rows.append(pd.DataFrame({"group": np.where(is_qb, "QB P(starts)", "RB/WR/TE P(plays)"), "p": m["p_play"],
+                                  "y": y, "week": w}))
+    r = pd.concat(rows, ignore_index=True)
+    r = r[r["p"] > 0]
+    out = []
+    for g, x in r.groupby("group"):
+        p = x["p"].clip(1e-4, 1 - 1e-4)
+        out.append({"group": g, "n": len(x), "mean_p": x["p"].mean(), "observed": x["y"].mean(),
+                    "brier": float(np.mean((x["p"] - x["y"]) ** 2)),
+                    "log_loss": float(-np.mean(x["y"] * np.log(p) + (1 - x["y"]) * np.log(1 - p)))})
+    return pd.DataFrame(out)
+
+
 def calibration_table(res: pd.DataFrame, table_id: str) -> pd.DataFrame:
     r = res[(res["table"] == table_id) & (res["pool"] == "A")]
     rows = []
@@ -372,10 +406,12 @@ def _md(df: pd.DataFrame, fmt: dict[str, str]) -> str:
 
 def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame | None = None,
                  tune_log: list[dict] | None = None, inactive: pd.DataFrame | None = None,
-                 path: Path = REPORT_PATH, notes: Sequence[str] = ()) -> str:
+                 path: Path = REPORT_PATH, notes: Sequence[str] = (), availability: pd.DataFrame | None = None,
+                 changes: Sequence[str] = ()) -> str:
     """Markdown report of measured results (every number computed from the frames passed in)."""
     hs = sorted(set(zip(holdout["season"], holdout["week"])))
     label = f"{hs[0][0]} weeks {hs[0][1]}-{hs[-1][1]}" if len({s for s, _ in hs}) == 1 else str(hs)
+    span = label  # ``label`` is reused by the QB split loop below
     L = [f"# NFL baseline backtest: {label}", "",
          f"Generated by `dfs.backtest.write_report` on {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC. "
          "Every number below was computed from real nflverse games by the code in this repo.", ""]
@@ -411,13 +447,15 @@ def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame 
           "(game-day `INA` inactives are NOT used unless stated), the last depth-chart snapshot before game day, "
           "and box scores / snap counts / ff_opportunity from earlier weeks only.",
           "- Actual fantasy points: nflverse weekly box scores scored by `dfs.scoring.score` with the repo's "
-          "`draftkings.nfl` / `fanduel.nfl` tables. DST: sacks = the opponent's official sacks taken, "
+          "`draftkings.nfl` / `fanduel.nfl` tables. Fumbles lost = nflverse `fumbles_lost_total` (adds fumbles "
+          "lost on kick/punt returns, which both sites charge). DST: sacks = the opponent's official sacks taken, "
           "defensive TDs include fumble-recovery TDs, blocked kicks include PATs; points allowed DK = opponent "
           "points minus 6 per opponent defensive TD (its XP still counts) and 2 per safety, FD = the site "
           "formula 6 x (offensive + own-fumble-recovery TDs) + 2pt + XP + 3 x FG. Checked against the season "
           "averages printed in the real 2026 week-6 DK and FD salary files (weeks 1-5): DST 20/20 teams on "
-          "each site; FD offense season totals match for 100% of QB/TE, 98.6% of RB, 95.1% of WR (the rest "
-          "differ in games-played counting).",
+          "each site (DK rounds half up); offense, 257 players matched by name and team: FD season totals "
+          "(FPPG x Played) agree for 256 (the other shows last season's line), DK averages for all 257 once "
+          "DK's games count is used (10 players have extra special-teams-only games).",
           f"- **Pool A** (primary): every QB/RB/WR/TE player-game with >= {SNAP_MIN:.0%} offensive snap share "
           "in the target week, plus every DST. Same rows for every model. The model's point forecast is its "
           "mean *conditional on playing* (QB: on starting), comparable with 'average when played' baselines.",
@@ -472,6 +510,11 @@ def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame 
               "0.10) and the OLS slope of actual on projected mean (1 = well scaled).", "",
               _md(calibration_table(holdout, t), {"n": "d", "below_p10": ".3f", "below_p50": ".3f",
                                                    "above_p90": ".3f", "slope": ".3f", "intercept": ".2f"})]
+    if availability is not None and len(availability):
+        L += [f"## Availability ({span}, every rostered QB/RB/WR/TE)", "",
+              "Pre-game P(logs an offensive snap) for RB/WR/TE and P(starts) for QBs, scored against what "
+              "happened (rows fixed at 0 by roster status or an Out designation are excluded):", "",
+              _md(availability, {"n": "d", "mean_p": ".3f", "observed": ".3f", "brier": ".4f", "log_loss": ".4f"})]
     if inactive is not None:
         L += ["## Post-inactives variant (game-day INA status known)", "",
               "Same weeks with `NFLParams(use_inactives=True)`; only availability changes, so pool B is the "
@@ -496,6 +539,10 @@ def write_report(holdout: pd.DataFrame, params: NFLParams, tuning: pd.DataFrame 
                     best = h["objective"]
                     L.append(f"  - {best:.4f} with {json.dumps(h['params'])}")
         L += [""]
+    if changes:
+        L += ["## Changes after review", "",
+              "Figures in this list describe the pre-fix code and were measured during the review; they are not "
+              "recomputed by this report.", ""] + [f"- {c}" for c in changes] + [""]
     if notes:
         L += ["## Notes and known weaknesses", ""] + [f"- {n}" for n in notes] + [""]
     text = "\n".join(L)
@@ -625,6 +672,27 @@ KNOWN_WEAKNESSES = [
     "distribution includes); the pinball-tuned dispersion was chosen on 2024-2025 with that same pool.",
     "Backup QBs are projected as if they start (p_zero = 1 - start probability); relief appearances are not "
     "modelled, so their played distribution is too high when they only enter late.",
+    "When a backup QB starts, team passing volume and efficiency still come from the team's history with its "
+    "usual starter; receivers and the opposing DST are not adjusted for the QB change.",
+    "The below-p10 rate understates lower-tail coverage for low-usage players whose played distribution has "
+    "an atom at 0 (p10 = 0, so an actual 0 is not 'below' it); cover80 counts those as covered.",
+]
+
+REVIEW_CHANGES = [
+    "Fumbles lost now use nflverse `fumbles_lost_total`, which includes fumbles lost on kick/punt returns; "
+    "before, returners' DK/FD season averages were off by 1 (DK) / 2 (FD) points per return fumble.",
+    "QB start probabilities: the start chain used P(logs an offensive snap), which for a backup is ~0.15-0.4 "
+    "even when he is the only healthy QB, so when the starter was out the team's start probabilities summed "
+    "to ~0.3-0.6 (6% of 2024-25 team-weeks below 0.9). It now uses P(dressed: game-day ACT) and is "
+    "conditioned on exactly one QB starting.",
+    "Availability adds the pre-game depth-chart bucket (starter / backup / other): healthy depth-chart "
+    "starters without recent snaps (season openers after a late-season injury, returns from IR) were scored "
+    "as deep backups (P(plays) ~0.5 against an observed ~0.9).",
+    "Naive baselines: the documented position-median fallback never applied (the position came from the "
+    "same empty history), so players without a game in two seasons got 0 (e.g. two starting QBs in 2026 "
+    "weeks 3-4); they now get the position median.",
+    "The week context keeps only pre-game schedule columns (target-week box-score columns were carried in "
+    "`WeekContext.games`, unused but one step from a leak); duplicate injury rows keep the latest report.",
 ]
 
 
@@ -658,7 +726,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             tuning = pd.concat([run_backtest(s, _weeks(args.tune_weeks), params, n_sims=args.sims, data=data,
                                              tables=TABLES[:1]) for s in tune_seasons], ignore_index=True)
         log = json.loads(Path(args.tune_log).read_text())["passes"] if args.tune_log else None
-        write_report(res, params, tuning=tuning, tune_log=log, inactive=inactive, notes=KNOWN_WEAKNESSES)
+        avail = availability_metrics(data, args.season, _weeks(args.weeks), params)
+        write_report(res, params, tuning=tuning, tune_log=log, inactive=inactive, notes=KNOWN_WEAKNESSES,
+                     availability=avail, changes=REVIEW_CHANGES)
         print(f"wrote {REPORT_PATH}")
     return 0
 

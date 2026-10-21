@@ -319,4 +319,6 @@ def test_player_means_conserve_team_volume_and_redistribute():
     assert out.loc["T1", "targets"] > full.loc["T1", "targets"]
     assert (out.loc["W2", "targets"] - full.loc["W2", "targets"]) / full.loc["W2", "targets"] > \
         (out.loc["T1", "targets"] - full.loc["T1", "targets"]) / full.loc["T1", "targets"]
-    assert out.loc["Q1", "p_play"] == pytest.approx(0.98) and out.loc["Q2", "p_play"] < 0.03
+    # start chain 0.98 / 0.02 * 0.98, conditioned on exactly one QB starting
+    assert out.loc["Q1", "p_play"] == pytest.approx(0.98 / (0.98 + 0.02 * 0.98)) and out.loc["Q2", "p_play"] < 0.03
+    assert out.loc[["Q1", "Q2"], "p_play"].sum() == pytest.approx(1.0)

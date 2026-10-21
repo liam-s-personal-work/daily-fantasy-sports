@@ -7,9 +7,10 @@ Layers (each fit only on games before the target week):
    team-offense and opponent-defense tendencies (``TeamModel``).
 3. Usage: recency-weighted, empirical-Bayes shrunk conditional shares of team targets,
    carries and expected TDs (ff_opportunity ``*_exp``); QBs get a start probability.
-4. Availability: P(plays) by (injury designation, practice status, recent role) estimated
-   from history; vacated usage is redistributed with position affinity so that expected
-   shares are conserved.
+4. Availability: P(plays) by (injury designation, practice status, recent role, pre-game
+   depth-chart bucket) estimated from history; QBs start down the depth order by P(dressed),
+   conditioned on exactly one starting; vacated usage is redistributed with position affinity
+   so that expected shares are conserved.
 5. Efficiency: catch rate, yards/target, yards/carry shrunk toward the player's own expected
    values from ff_opportunity; team yards / TDs are split by these and rescaled to team totals.
 6. Simulation of stat lines (gamma-Poisson counts, gamma yardage, Poisson TDs) scored by a
@@ -172,7 +173,11 @@ class NFLData:
                    rosters=ros, depth_raw=depth, kicking=_kicking(ts), kicker_games=kg.reset_index(drop=True))
 
     def depth_chart(self, season: int, week: int, as_of: pd.Timestamp | None) -> pd.DataFrame:
-        key = ("depth", season, week, str(as_of))
+        fmt = ("depth_snapshots", season)
+        if fmt not in self.cache:
+            d = self.depth_raw.get(season)
+            self.cache[fmt] = d is not None and "dt" in d.columns and bool(d["dt"].notna().any())
+        key = ("depth", season, week, str(as_of) if self.cache[fmt] else None)  # weekly charts ignore as_of
         if key not in self.cache:
             self.cache[key] = self._depth_chart(season, week, as_of)
         return self.cache[key]
@@ -579,6 +584,16 @@ class AvailabilityModel:
     @classmethod
     def fit(cls, data: "NFLData", season: int, week: int, n_seasons: int = 4, m: float = 25.0,
             target: str = "played") -> "AvailabilityModel":
+        return cls.fit_many(data, season, week, (target,), n_seasons, m)[target]
+
+    @classmethod
+    def fit_many(cls, data: "NFLData", season: int, week: int, targets: Iterable[str] = ("played", "active"),
+                 n_seasons: int = 4, m: float = 25.0) -> dict[str, "AvailabilityModel"]:
+        """One model per target from the same history rows (roles and depth ranks are computed once)."""
+        targets = list(targets)
+        unknown = set(targets) - {"played", "active"}
+        if unknown:
+            raise ValueError(f"unknown availability target(s) {sorted(unknown)}")
         ros = data.rosters
         k = nv.week_key(ros["season"], ros["week"])
         mask = (k < nv.week_key(season, week)) & (ros["season"] >= season - n_seasons) & ros["pos"].isin(OFF_POS)
@@ -586,15 +601,11 @@ class AvailabilityModel:
         r = ros.loc[mask, ["season", "week", "gsis_id", "team", "pos", "status"]].drop_duplicates(
             ["season", "week", "gsis_id"])
         r["wk"] = nv.week_key(r["season"], r["week"])
-        if target == "active":
-            r["played"] = (r["status"] == "ACT").astype(float)
-        elif target == "played":
-            pg = data.player_games
-            pl = pg.loc[pg["offense_pct"].fillna(1.0) > 0, ["gsis_id", "wk"]].drop_duplicates().assign(played=1.0)
-            r = r.merge(pl, on=["gsis_id", "wk"], how="left")
-            r["played"] = r["played"].fillna(0.0)
-        else:
-            raise ValueError(f"unknown availability target {target!r}")
+        pg = data.player_games
+        pl = pg.loc[pg["offense_pct"].fillna(1.0) > 0, ["gsis_id", "wk"]].drop_duplicates().assign(played=1.0)
+        r = r.merge(pl, on=["gsis_id", "wk"], how="left")
+        r["played"] = r["played"].fillna(0.0)
+        r["active"] = (r["status"] == "ACT").astype(float)
         r["role"] = recent_roles(r, data)
         r["dc"] = depth_bucket(r["pos"], data.depth_ranks(r))
         inj = data.injuries[["season", "week", "gsis_id", "report_status", "practice_status"]].drop_duplicates(
@@ -602,27 +613,31 @@ class AvailabilityModel:
         r = r.merge(inj, on=["season", "week", "gsis_id"], how="left")
         r["rep"] = r["report_status"].map(_report_cat)
         r["prac"] = r["practice_status"].map(_practice_cat)
+        return {t: cls._from_rows(r, t, m) for t in targets}
+
+    @classmethod
+    def _from_rows(cls, r: pd.DataFrame, y: str, m: float) -> "AvailabilityModel":
         table: dict[tuple, float] = {}
         counts: dict[tuple, int] = {}
-        base = (r["played"].sum() + 1) / (len(r) + 2)
+        base = (r[y].sum() + 1) / (len(r) + 2)
         for rep, g in r.groupby("rep"):
-            table[(rep,)] = (g["played"].sum() + m * base) / (len(g) + m)
+            table[(rep,)] = (g[y].sum() + m * base) / (len(g) + m)
             counts[(rep,)] = len(g)
         for (rep, role), g in r.groupby(["rep", "role"]):
-            table[(rep, role)] = (g["played"].sum() + m * table[(rep,)]) / (len(g) + m)
+            table[(rep, role)] = (g[y].sum() + m * table[(rep,)]) / (len(g) + m)
             counts[(rep, role)] = len(g)
         for (pos, rep, role), g in r.groupby(["pos", "rep", "role"]):
-            table[(pos, rep, role)] = (g["played"].sum() + m * table[(rep, role)]) / (len(g) + m)
+            table[(pos, rep, role)] = (g[y].sum() + m * table[(rep, role)]) / (len(g) + m)
             counts[(pos, rep, role)] = len(g)
         for (pos, rep, prac, role), g in r.groupby(["pos", "rep", "prac", "role"]):
-            table[(pos, rep, prac, role)] = (g["played"].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
+            table[(pos, rep, prac, role)] = (g[y].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
             counts[(pos, rep, prac, role)] = len(g)
         for (pos, rep, role, dc), g in r.groupby(["pos", "rep", "role", "dc"]):
-            table[("dc", pos, rep, role, dc)] = (g["played"].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
+            table[("dc", pos, rep, role, dc)] = (g[y].sum() + m * table[(pos, rep, role)]) / (len(g) + m)
             counts[("dc", pos, rep, role, dc)] = len(g)
         for (pos, rep, prac, role, dc), g in r.groupby(["pos", "rep", "prac", "role", "dc"]):
             key = ("dc", pos, rep, prac, role, dc)
-            table[key] = (g["played"].sum() + m * table[("dc", pos, rep, role, dc)]) / (len(g) + m)
+            table[key] = (g[y].sum() + m * table[("dc", pos, rep, role, dc)]) / (len(g) + m)
             counts[key] = len(g)
         return cls(table, counts)
 
@@ -1050,11 +1065,11 @@ def build_context(data: NFLData, season: int, week: int, params: NFLParams | Non
     pool["depth_rank"] = pool["depth_rank"].astype(float).fillna(9.0)
     pool["dc"] = depth_bucket(pool["pos"], pool["depth_rank"])
 
+    akey = ("availability", season, week)
+    if akey not in data.cache:
+        data.cache[akey] = AvailabilityModel.fit_many(data, season, week, ("played", "active"))
     for col, target in (("p_active", "played"), ("p_dress", "active")):
-        akey = ("availability", target, season, week)
-        if akey not in data.cache:
-            data.cache[akey] = AvailabilityModel.fit(data, season, week, target=target)
-        av = data.cache[akey]
+        av = data.cache[akey][target]
         pool[col] = [av.prob(*k) for k in zip(pool["pos"], pool["rep"], pool["prac"], pool["role"], pool["dc"])]
     out_status = pool["status"].isin(UNAVAILABLE_STATUS) | (P.use_inactives & (pool["status"] == "INA")) \
         | (pool["rep"] == "out")  # the official "Out" designation is final
@@ -1121,7 +1136,12 @@ def player_means(ctx: WeekContext) -> pd.DataFrame:
         q = idx[is_qb[idx]]
         o = idx[~is_qb[idx]]
         if len(q):
-            pi[q] = qb_start_probs(m.iloc[q], ctx.depth_snapshot)
+            qbs = m.iloc[q]
+            if "p_dress" in m.columns:  # availability to start = dressed, not "logs a snap"
+                qbs = qbs.assign(p_active=qbs["p_dress"])
+            pi[q] = qb_start_probs(qbs, ctx.depth_snapshot)
+            if pi[q].sum() > 0:  # exactly one QB starts: the chain's leftover ("nobody dressed") is impossible
+                pi[q] = pi[q] / pi[q].sum()
         e_qcar = min(float((pi[q] * m["q_car"].to_numpy()[q]).sum()), 0.6)
         e_qutd = min(float((pi[q] * m["q_utd"].to_numpy()[q]).sum()), 0.6)
         if len(o):
