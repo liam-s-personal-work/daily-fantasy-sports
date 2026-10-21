@@ -168,7 +168,7 @@ def _canon_slot(label: str) -> str:
     return SLOT_ALIASES.get(up, label.strip())
 
 
-def _contest_kind(names: list[str]) -> ContestKind:
+def contest_kind(names: list[str]) -> ContestKind:
     """Cash only when every entered contest's name says so; otherwise treat as a tournament."""
     if names and all(any(w in n.lower() for w in CASH_WORDS) for n in names):
         return ContestKind.CASH
@@ -273,8 +273,19 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
 
     # Candidates: one per (row, slot-family). DK CPT rows and FD MVP pricing become their own candidates.
     cands: list[Candidate] = []
+    names_by_key: dict[str, dict[str, str]] = {}  # base key -> raw name -> key (same-team "X" and "X Jr.")
     for x in raw:
         key = player_key(x["team"], x["name"], x["positions"][0] if x["positions"] else "?", sport)
+        raw_name = " ".join(x["name"].split())
+        seen = names_by_key.setdefault(key, {})
+        if raw_name not in seen:
+            if seen and "|dst|" not in key:  # a different player whose name normalises to the same key
+                t, n, pos = key.split("|")
+                seen[raw_name] = f"{t}|{n} #{x['id']}|{pos}"
+                warnings.append(f"'{raw_name}' and '{next(iter(seen))}' ({t} {pos}) are told apart by site id")
+            else:
+                seen[raw_name] = key
+        key = seen[raw_name]
         if key not in players:
             players[key] = Player(key=key, name=x["name"].strip(), team=x["team"], opponent=x["opp"],
                                   positions=[p.upper() for p in x["positions"]], game=x["game"],
@@ -346,6 +357,9 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
             warnings.append(f"{len(bad)} CPT rows are not priced at 1.5x their FLEX row")
     if rules.game_type in ("showdown", "single_game") and len(games) > 1:
         warnings.append(f"{rules.game_type} file spans {len(games)} games")
+    if site == Site.FANDUEL and game_type == "classic" and len(games) == 1 and all(x["roster"] is None for x in raw):
+        warnings.append("FanDuel player list with one game and no Roster Position column: if this is a single-game "
+                        "contest, pass --game-type single_game_legacy (or single_game)")
     if legacy_sg:
         warnings.append("FanDuel single-game file in the pre-Aug-2025 format (no MVP salary column): "
                         "using MVP + 4 FLEX with no MVP salary premium; check the contest's rules")
@@ -355,5 +369,5 @@ def load_contest(path: str | Path, *, sport: str | None = None, game_type: str |
 
     names = sorted({e.contest_name for e in entries})
     return Contest(rules=rules, players=players, candidates=cands, entries=entries, slot_headers=slot_headers,
-                   source_file=str(path), file_kind=kind, kind=_contest_kind(names), games=games,
+                   source_file=str(path), file_kind=kind, kind=contest_kind(names), games=games,
                    warnings=warnings)

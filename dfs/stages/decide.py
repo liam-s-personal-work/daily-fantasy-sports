@@ -64,13 +64,14 @@ class Decider:
         return f"maximise P(finishing in the top {self.cfg.target_top:.1%}) against a simulated field"
 
     def _choose(self, points: dict[str, float], exclude: set[str], label: str,
-                user_rules=None, n: int | None = None, slot_locks: dict[int, str] | None = None) -> tuple[Lineup, dict]:
+                user_rules=None, n: int | None = None, slot_locks: dict[int, str] | None = None,
+                kind: ContestKind | None = None) -> tuple[Lineup, dict]:
         """Contest-objective lineup(s); adjusted points rescale that player's simulated outcomes."""
         scale = {k: points[k] / self.proj[k].mean for k in points
                  if k in self.proj and self.proj[k].mean > 0 and abs(points[k] - self.proj[k].mean) > 1e-9}
         proj = {k: (self.proj[k].model_copy(update={"mean": points[k]}) if k in scale else self.proj[k])
                 for k in points if k in self.proj}
-        res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=self.kind,
+        res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=kind or self.kind,
                                target_top=self.cfg.target_top, n=n or 1, exclude=set(exclude) | self.started,
                                user_rules=user_rules, seed=self.cfg.seed, scale=scale,
                                slot_locks=self._fallback_locks if slot_locks is None else slot_locks)
@@ -182,26 +183,34 @@ class Decider:
         entries = self.c.entries
         if not entries:
             return [final], None
+        from dfs.io.contest_file import contest_kind
         from dfs.pipeline import entry_lock_groups
-        groups = entry_lock_groups(self.c, self.now)
+        # Entries are grouped by their locked cells and by their own contest's objective, so a
+        # Double Up entry in a file that also holds a tournament gets a cash lineup.
+        kinds = [contest_kind([e.contest_name]) for e in entries]
+        mixed = len(set(kinds)) > 1
+        groups: dict[tuple, list[int]] = {}
+        for locks, idx in entry_lock_groups(self.c, self.now).items():
+            for i in idx:
+                groups.setdefault((locks, kinds[i] if mixed else self.kind), []).append(i)
         out: list[Lineup | None] = [None] * len(entries)
         unsolvable: list[str] = []
-        for locks, idx in groups.items():
-            if dict(locks) == self._fallback_locks or (not locks and not self._fallback_locks):
-                if len(idx) == 1:
-                    out[idx[0]] = final
-                    continue
+        for (locks, kind), idx in groups.items():
+            main = dict(locks) == self._fallback_locks and kind == self.kind
+            if main and len(idx) == 1:
+                out[idx[0]] = final
+                continue
             try:
-                _, res = self._choose(points, excluded, "final", n=len(idx), slot_locks=dict(locks))
+                _, res = self._choose(points, excluded, "final", n=len(idx), slot_locks=dict(locks), kind=kind)
             except Infeasible:
                 unsolvable += [entries[i].entry_id for i in idx]
                 continue
             lus = res["lineups"]
-            if dict(locks) == self._fallback_locks:
+            if main:
                 lus = [final] + [lu for lu in lus if lu.player_keys != final.player_keys]
             for j, i in enumerate(idx):
                 out[i] = lus[j % len(lus)]
-        self.report["entries"] = {"n": len(entries), "lock_groups": len(groups),
+        self.report["entries"] = {"n": len(entries), "groups": len(groups), "mixed_contest_kinds": mixed,
                                   "left_unchanged_no_legal_lineup": unsolvable}
         keep = [i for i, lu in enumerate(out) if lu is not None]
         if not keep:

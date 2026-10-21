@@ -279,3 +279,13 @@ def test_lastcall_keeps_a_started_pick_that_news_calls_out(cfg):
     out = lastcall(res.run_dir, web=True, now=mid, backend=fake(news=news), log=lambda s: None)
     assert started_pick in out["final"].player_keys and started_pick in out["out_but_locked"]
     assert check_legal(res.contest, out["final"]) == []
+
+
+def test_mixed_cash_and_tournament_entries_get_their_own_objective(cfg):
+    from dfs.io.contest_file import contest_kind
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    kinds = {contest_kind([e.contest_name]).value for e in res.contest.entries}
+    assert kinds == {"cash", "gpp"}  # the fixture mixes a Double Up with a tournament
+    assert res.report["decision"]["entries"]["mixed_contest_kinds"] is True
+    for lu in res.report["lineups"]:
+        assert check_legal(res.contest, lu) == []

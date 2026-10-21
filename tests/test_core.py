@@ -479,3 +479,16 @@ def test_rule_names_teams_and_games_are_strict():
     with pytest.raises(RuleError, match="more than one player"):
         validate_rules(c2, UserRules(lock=[p0.name]))
     validate_rules(c2, UserRules(lock=[f"{p0.name} ({p0.team})"]))
+
+
+def test_same_team_jr_and_sr_stay_two_players(tmp_path):
+    rows = []
+    for i, (name, sal) in enumerate([("Marvin Harrison Jr.", 7800), ("Marvin Harrison", 3000)]):
+        rows.append(["WR", f"{name} ({62000000 + i})", name, 62000000 + i, "WR/FLEX", sal, "ARI@SF 10/25/2026 04:05PM ET", "ARI", 10])
+    base = list(csv.reader(open(FIX / "dk_salaries_classic.csv", encoding="utf-8-sig")))[1:]
+    c = load_contest(_dk_file(tmp_path, [r[:9] for r in base] + rows, "jr.csv"))
+    harrisons = [k for k, p in c.players.items() if "harrison" in k]
+    assert len(harrisons) == 2
+    ids = {x.site_id: x.player_key for x in c.candidates if x.player_key in harrisons}
+    assert ids["62000000"] != ids["62000001"]
+    assert any("told apart" in w for w in c.warnings)
