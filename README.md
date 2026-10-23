@@ -87,3 +87,5 @@ One network test also needs a real FD salary file in `data/cache/real_samples/` 
 - College data: [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) release files,
   CC-BY-4.0 (cfbfastR play-by-play; ESPN-derived box scores, rosters and lines). Used for personal,
   non-commercial analysis; not redistributed. See `docs/PLAN.md` §5.
+- NBA data: the same sportsdataverse release files (ESPN-derived player box scores), on the same terms.
+  How the NBA baseline was tuned: [docs/results/nba_baseline.md](docs/results/nba_baseline.md).

@@ -157,6 +157,9 @@ def provider_for(contest: Contest, cfg: RunConfig):
             return CFBProvider(season=cfg.season, week=cfg.week)
         except ImportError:
             return GenericProvider()
+    if sport == "nba":
+        from dfs.projections.nba_provider import NBAProvider
+        return NBAProvider(season=cfg.season)
     return GenericProvider()
 
 
@@ -328,6 +331,16 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
             else:
                 calib = {}
     baseline = {k: v for k, v in ctx.baseline.items() if k not in out_keys}
+    if sport not in FOOTBALL:  # no forecaster to price tonight's statuses: cited facts set p_zero
+        baseline, status_changes = agents.apply_status(contest, dossiers, baseline)
+        _save(run_dir, "status_changes.json", status_changes)
+        if status_changes:
+            log(f"availability from research: p_zero changed for {len(status_changes)} players")
+    if hasattr(provider, "after_research"):  # e.g. NBA team minutes, once tonight's statuses are known
+        baseline, adj_notes = provider.after_research(contest, baseline)
+        ctx.notes.extend(adj_notes)
+        for n in adj_notes:
+            log(f"baseline: {n}")
     projections = blend_mod.blend(baseline, {k: v for k, v in forecasts.items() if k not in out_keys},
                                   contest.players, sport, learned=learned, calib=calib,
                                   weight_override=cfg.forecast_weight_override)

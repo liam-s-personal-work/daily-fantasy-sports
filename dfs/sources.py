@@ -18,7 +18,8 @@ REGISTER: dict[str, dict] = {
                  "retained; depth charts are ESPN-derived copies: personal use, no redistribution",
                  "url": "https://github.com/nflverse/nflverse-data"},
     "sportsdataverse": {"status": "CONDITIONAL", "terms": "CC-BY-4.0, attribute sportsdataverse; pre-built GitHub release files, no scraping; college box scores, "
-                        "rosters, teams and lines are ESPN-derived copies: personal use, no redistribution; upstream rights retained",
+                        "rosters, teams and lines and NBA box scores are ESPN-derived copies: personal use, no redistribution; "
+                        "upstream rights retained",
                         "url": "https://github.com/sportsdataverse/sportsdataverse-data/releases"},
     "anthropic_web_search": {"status": "ALLOWED", "terms": "server-side search via Claude; cite sources",
                              "url": "https://platform.claude.com/docs"},

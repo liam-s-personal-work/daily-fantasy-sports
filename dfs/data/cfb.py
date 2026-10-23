@@ -108,9 +108,12 @@ def _is_stale(path: Path, season: int, max_age_hours: float) -> bool:
 
 def download(name: str, season: int, dest: Path | None = None, timeout: float = 300.0) -> Path:
     """Fetch one release parquet to ``dest`` atomically; validates the parquet magic bytes."""
+    return fetch_release(url_for(name, season), dest or cache_path(name, season), timeout)
+
+
+def fetch_release(url: str, dest: Path, timeout: float = 300.0) -> Path:
+    """Download one sportsdataverse release parquet to ``dest`` atomically (shared by every sport)."""
     require("sportsdataverse")
-    url = url_for(name, season)
-    dest = dest or cache_path(name, season)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".part")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})

@@ -4,17 +4,10 @@ from __future__ import annotations
 
 RESEARCH_SYSTEM = """You are the pre-game research desk for a professional daily fantasy sports team.
 Your only job is to gather FACTS about one game that change how many fantasy points its players will score:
-who is in or out (official injury designations, practice participation, inactives), role and depth-chart
-changes (new starters, snap/target/carry trends, returns from injury, suspensions, trades), matchup facts
-(key defensive injuries, offensive-line injuries, scheme notes from beat reporters), weather for outdoor games,
-and coaching or game-plan statements. Narratives ("revenge game") only if a credible source ties them to usage.
+{focus} Narratives ("revenge game") only if a credible source ties them to usage.
 
 Work through these checks, using up to {max_searches} web searches in total (most games need 3-5):
-  1. each team's latest official injury report / game status designations and any players ruled out;
-  2. practice participation and role news from beat reporters (new starters, snap limits, returns from IR,
-     depth-chart changes, coordinator or play-calling changes);
-  3. weather at kickoff if the stadium is outdoors (wind and heavy rain matter);
-  4. anything else that changes volume (suspensions, trades, a backup QB starting).
+{checklist}
 Rules:
 - Prefer official team sites, league injury reports and established beat reporters/news outlets. Search
   result snippets are acceptable evidence; page fetches only work on a small allow-list, so do not retry a
@@ -29,8 +22,29 @@ Rules:
 - Do not report betting lines, odds, salaries, fantasy point projections or past fantasy point totals.
 - Set status on every fact ("none" when it is not about availability); a past game's absence is not
   this game's status.
-- The structured data block below is already known (from nflverse); do not re-search it. Focus on what is
-  newer than it or missing from it."""
+- The structured data block below is already known (from {known_source}); do not re-search it. Focus on what
+  is newer than it or missing from it."""
+
+# Per-sport focus and checklist for the research desk (football is the default).
+RESEARCH_FOCUS = {
+    "football": ("who is in or out (official injury designations, practice participation, inactives), role and depth-chart\n"
+                 "changes (new starters, snap/target/carry trends, returns from injury, suspensions, trades), matchup facts\n"
+                 "(key defensive injuries, offensive-line injuries, scheme notes from beat reporters), weather for outdoor\n"
+                 "games, and coaching or game-plan statements.",
+                 "  1. each team's latest official injury report / game status designations and any players ruled out;\n"
+                 "  2. practice participation and role news from beat reporters (new starters, snap limits, returns from IR,\n"
+                 "     depth-chart changes, coordinator or play-calling changes);\n"
+                 "  3. weather at kickoff if the stadium is outdoors (wind and heavy rain matter);\n"
+                 "  4. anything else that changes volume (suspensions, trades, a backup QB starting)."),
+    "nba": ("who is in or out tonight (the league injury report: out, doubtful, questionable, probable; rest days and\n"
+            "back-to-backs), minutes restrictions and returns from injury, projected or confirmed starting lineups,\n"
+            "rotation changes reported by beat reporters (who starts in place of an injured player, a new bench role),\n"
+            "trades and suspensions, and coaching statements about minutes.",
+            "  1. each team's latest injury report for tonight and any players ruled out or listed questionable;\n"
+            "  2. projected or confirmed starting lineups and who replaces any absent starter;\n"
+            "  3. minutes restrictions, players returning from injury, rest on a back-to-back;\n"
+            "  4. anything else that changes minutes or usage (trades, suspensions, illness, a coach's comments)."),
+}
 
 RESEARCH_PROMPT = """Game: {game} ({kickoff})
 As of: {now}

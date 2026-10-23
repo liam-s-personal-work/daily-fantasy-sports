@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from dfs.io.contest_file import norm_name
 from dfs.llm import prompts, schemas
 from dfs.llm.backend import AgentResult, AgentTask
-from dfs.models import Contest, Fact, Forecast, GameDossier, Lineup
+from dfs.models import Contest, Fact, Forecast, GameDossier, Lineup, Projection
 from dfs.scoring import describe
 from dfs.sources import host_blocked
 
@@ -173,6 +173,10 @@ def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, st
     """One research agent per game. ``now`` (to the hour) is in the prompt: it tells the agent what is
     current, and a re-run hours later gets fresh research instead of the cached answer."""
     asof = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:00 UTC")
+    sport = contest.rules.sport
+    focus, checklist = prompts.RESEARCH_FOCUS.get(sport, prompts.RESEARCH_FOCUS["football"])
+    known_source = {"nfl": "nflverse", "cfb": "sportsdataverse college data",
+                    "nba": "ESPN box scores via sportsdataverse"}.get(sport, "the contest file")
     tasks = []
     for g in contest.games:
         players = [contest.players[k] for k in _players_of_game(contest, g)]
@@ -181,7 +185,8 @@ def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, st
                            for p in players)
         tasks.append(AgentTask(
             stage="research", name=f"research:{g}", model=model, tools=["WebSearch", "WebFetch"],
-            system=prompts.RESEARCH_SYSTEM.format(max_searches=max_searches),
+            system=prompts.RESEARCH_SYSTEM.format(max_searches=max_searches, focus=focus, checklist=checklist,
+                                                  known_source=known_source),
             prompt=prompts.RESEARCH_PROMPT.format(game=g, kickoff=kickoff, now=asof,
                                                   known=known.get(g, "(none)"), roster=roster),
             schema=schemas.RESEARCH, max_turns=max_searches * 2 + 6, timeout_s=timeout_s))
@@ -366,6 +371,38 @@ def ruled_out_keys(contest: Contest, dossiers: dict[str, GameDossier]) -> set[st
                     and (fact_about(f, k, contest) or _names_player(f, k, contest)) and says_out(f) for f in d.facts):
                 out.add(k)
     return out
+
+
+# Chance of not playing for a cited, non-final availability status (out/inactive are removed elsewhere).
+STATUS_P_ZERO = {"doubtful": 0.75, "questionable": 0.3, "probable": 0.05, "active": 0.0}
+
+
+def apply_status(contest: Contest, dossiers: dict[str, GameDossier],
+                 baseline: dict[str, Projection]) -> tuple[dict[str, Projection], list[dict]]:
+    """Code decides p_zero from the latest cited availability fact about each player, for sports without
+    the forecaster (it prices these facts itself). Only the chance of not playing changes; the
+    distribution given that the player plays is kept. Low-confidence and blocked-host facts never count."""
+    out = dict(baseline)
+    changes = []
+    for k, pr in baseline.items():
+        d = dossiers.get(contest.players[k].game or "")
+        if d is None:
+            continue
+        facts = [f for f in d.facts if f.kind in ("injury", "status") and f.confidence != "low"
+                 and (f.status or "").lower() in STATUS_P_ZERO and not host_blocked(f.source_url)
+                 and fact_about(f, k, contest)]
+        if not facts:
+            continue
+        f = max(facts, key=lambda f: (f.as_of or "", f.confidence == "high"))  # the latest (ISO dates sort)
+        # a provider's floor holds: "probable" says a healthy scratch is available, not that he will play
+        pz = max(STATUS_P_ZERO[f.status.lower()], pr.components.get("p_zero_floor", 0.0))
+        if abs(pz - pr.p_zero) < 1e-9 or pr.p_zero >= 1:
+            continue
+        given_play = pr.mean / (1 - pr.p_zero)
+        out[k] = pr.model_copy(update={"p_zero": pz, "mean": round(given_play * (1 - pz), 3)})
+        changes.append({"player": k, "status": f.status, "fact": f.id, "p_zero": [pr.p_zero, pz],
+                        "mean": [pr.mean, out[k].mean]})
+    return out, changes
 
 
 def _hard_out(facts: list[Fact]) -> bool:
