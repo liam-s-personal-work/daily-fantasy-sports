@@ -471,3 +471,12 @@ def test_lastcall_entries_on_a_salary_run_is_reported(cfg):
     out = lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc), backend=fake(),
                    log=lambda s: None, entries_file=FIX / "dk_entries_classic.csv")
     assert any("salary file" in w for w in out["warnings"])
+
+
+def test_lastcall_summary_reads_named_cells(cfg, capsys):
+    from dfs.cli import main
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    assert "(" in list(csv.reader(open(res.upload_path)))[1][5]  # DK cells carry names
+    main(["lastcall", str(res.run_dir), "--no-web", "--now", "2026-10-25T12:30:00+00:00"])
+    out = capsys.readouterr().out
+    assert "slot(s) changed" not in out and "unchanged" in out

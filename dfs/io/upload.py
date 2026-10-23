@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import os
 import io
+import re
 from pathlib import Path
 
 from dfs.models import Contest, Lineup, Site
@@ -40,6 +41,12 @@ def name_cell(contest: Contest, site_id: str) -> str:
             p = contest.players.get(c.player_key)
             return f"{p.name if p else c.player_key} ({site_id})"
     return site_id
+
+
+def cell_id(cell: str) -> str:
+    """The site ID in an upload cell: "Name (ID)", "Name (ID) (LOCKED)" or a bare ID."""
+    m = re.search(r"\((\d+)\)(?:\s*\(LOCKED\))?\s*$", cell or "")
+    return m.group(1) if m else (cell or "").strip()
 
 
 def _cells(contest: Contest, ids: list[str], names: bool) -> list[str]:

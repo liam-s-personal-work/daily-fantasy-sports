@@ -543,3 +543,11 @@ def test_fd_upload_keeps_ids_and_writes_a_readable_copy(tmp_path):
     readable = list(csv.reader(open(tmp_path / "upload_readable.csv")))[1][4:]
     assert all(re.fullmatch(r"\d+-\d+", x) for x in ids)
     assert [r.endswith(f"({i})") and len(r) > len(i) + 3 for r, i in zip(readable, ids)] == [True] * len(ids)
+
+
+@pytest.mark.parametrize("cell,want", [("Trae Young (44630288)", "44630288"), ("44630288", "44630288"),
+                                       ("Titans  (44221417)", "44221417"), ("Josh Allen (42297980) (LOCKED)", "42297980"),
+                                       ("127613-157808", "127613-157808")])
+def test_cell_id_reads_every_upload_cell_form(cell, want):
+    from dfs.io.upload import cell_id
+    assert cell_id(cell) == want

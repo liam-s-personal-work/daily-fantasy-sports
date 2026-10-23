@@ -99,10 +99,12 @@ def _lastcall(args) -> int:
         pass
     if held:
         import csv as _csv
+
+        from dfs.io.upload import cell_id
         rows = list(_csv.reader(open(out["upload"])))[1:]
         for r in rows:
             before = held.get(r[0])
-            n = sum(a != b for a, b in zip(before or [], r[4:])) if before else None
+            n = sum(a != cell_id(b) for a, b in zip(before or [], r[4:])) if before else None
             print(f"  entry {r[0]}: " + ("unchanged" if n == 0 else f"{n} slot(s) changed" if n else "rebuilt"))
     e = out.get("entries") or {}
     for w in out.get("warnings") or []:
