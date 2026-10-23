@@ -12,7 +12,8 @@ Rules:
 - Prefer official team sites, league injury reports and established beat reporters/news outlets. Search
   result snippets are acceptable evidence; page fetches only work on a small allow-list, so do not retry a
   fetch that is denied. Do not log in anywhere, do not use paywalled or login-only content, and never
-  access DraftKings or FanDuel.
+  access DraftKings or FanDuel. Facts cited to fantasy-advice, DFS or betting sites (RotoBaller, Rotowire,
+  FantasyPros, CBS or NBC fantasy pages, odds sites) are discarded, so find the team, league or news source.
 - Every fact needs a source URL and the date/time the source gives. Never state a fact you did not read.
 - Report facts, not opinions or projections. No fantasy point predictions.
 - Mark confidence: high = official report or multiple reliable sources; medium = one reliable source; low = rumor.

@@ -45,8 +45,9 @@ BLOCKED_HOSTS = re.compile(r"(^|\.)(draftkings\.com|fanduel\.com|draftkings\.\w+
                            r"covers\.com|vegasinsider\.com|oddsshark\.com|sportsline\.com|betmgm\.com|caesars\.com|"
                            r"williamhill\.com|pointsbet\.com|bet365\.com|betrivers\.com|fanatics\.com|espnbet\.com|"
                            r"sleeper\.com|dailyfantasyfuel\.com|fantasylabs\.com|establishtherun\.com|stokastic\.com|"
+                           r"rotoballer\.com|fantasydata\.com|fantasyalarm\.com|razzball\.com|fantasynerds\.com|"
                            r"api\.espn\.com|cdn\.espn\.com|fantasy\.espn\.com)$", re.I)
-BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy-projections|rankings|projections)"
+BLOCKED_PATHS = re.compile(r"/(betting|odds|picks|props|dfs|daily-fantasy|fantasy|fantasy-projections|rankings|projections)"
                            r"(/|$|-)", re.I)
 
 

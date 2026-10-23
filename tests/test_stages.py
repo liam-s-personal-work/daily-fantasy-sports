@@ -512,3 +512,15 @@ def test_team_fact_counts_only_for_the_players_own_clause():
     for f, want in ((mixed, set()), (single, {"BUF|khalil shakir|WR"})):
         d = GameDossier(game=g, summary="", ruled_out=["Khalil Shakir"], facts=[f])
         assert agents.ruled_out_keys(c, {g: d}) == want
+
+
+@pytest.mark.parametrize("url", ["https://www.rotoballer.com/player-news/coby-white-out/1234",
+                                 "https://www.cbssports.com/fantasy/basketball/news/grant-williams-out/",
+                                 "https://www.nbcsports.com/fantasy/basketball/player-news/x"])
+def test_fantasy_news_sources_are_blocked(url):
+    assert host_blocked(url)
+
+
+def test_league_and_news_sources_stay_allowed():
+    assert not host_blocked("https://www.cbssports.com/nba/news/hornets-injury-report/")
+    assert not host_blocked("https://www.nba.com/news/injury-report")
