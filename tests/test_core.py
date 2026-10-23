@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import csv
 import itertools
 from pathlib import Path
@@ -325,7 +327,7 @@ def test_fd_max_per_team():
 def test_template_upload_for_salary_file():
     c = load_contest(FIX / "dk_salaries_classic.csv")
     lu = solve(c, {k: (p.site_avg or 0) for k, p in c.players.items()})
-    rows = upload_rows(c, [lu])
+    rows = upload_rows(c, [lu], names=False)
     assert rows[0] == c.slot_headers and rows[1] == [s.site_id for s in lu.slots]
 
 
@@ -336,7 +338,7 @@ def test_entries_upload_keeps_locked_and_only_changed():
     locked_key = next(x.player_key for x in c.candidates if x.site_id == locked_id)
     pts = {k: (p.site_avg or 0) for k, p in c.players.items()}
     lu = solve(c, pts, SolveOptions(lock_keys={locked_key}))
-    rows = upload_rows(c, [lu, lu], entry_ids=["5300000001", "5300000003"])
+    rows = upload_rows(c, [lu, lu], entry_ids=["5300000001", "5300000003"], names=False)
     assert rows[0][:4] == ["Entry ID", "Contest Name", "Contest ID", "Entry Fee"]
     assert rows[1][0] == "5300000001" and rows[1][3] == "$3 " and rows[1][4] == locked_id
     other = solve(c, pts, SolveOptions(exclude_keys={locked_key}))
@@ -520,3 +522,24 @@ def test_data_cache_folder_follows_checkout_and_env(monkeypatch, tmp_path):
     finally:
         monkeypatch.delenv("DFS_CACHE_DIR")
         importlib.reload(nv), importlib.reload(cfb)
+
+
+
+def test_dk_upload_names_each_player_in_dks_own_name_id_text():
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+    lu = solve(c, {k: (p.site_avg or 0) for k, p in c.players.items()})
+    cells = upload_rows(c, [lu])[1]
+    display = {x.site_id: x.display.strip() for x in c.candidates}
+    assert cells == [display[s.site_id] for s in lu.slots]
+    assert all(re.fullmatch(r".+ \(\d+\)", x) for x in cells)  # e.g. "Test Mia QB1 (50000009)"
+
+
+def test_fd_upload_keeps_ids_and_writes_a_readable_copy(tmp_path):
+    from dfs.io.upload import write_upload
+    c = load_contest(FIX / "fd_entries_classic.csv")
+    lu = solve(c, {k: (p.site_avg or 0) for k, p in c.players.items()})
+    path = write_upload(c, [lu], tmp_path / "upload.csv", only_changed=False)
+    ids = list(csv.reader(open(path)))[1][4:]
+    readable = list(csv.reader(open(tmp_path / "upload_readable.csv")))[1][4:]
+    assert all(re.fullmatch(r"\d+-\d+", x) for x in ids)
+    assert [r.endswith(f"({i})") and len(r) > len(i) + 3 for r, i in zip(readable, ids)] == [True] * len(ids)

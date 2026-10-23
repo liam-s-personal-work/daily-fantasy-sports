@@ -41,6 +41,13 @@ def fake(strategist=None, checker=None, news=None, backup=None):
     })
 
 
+def _rows(path):
+    """Upload rows with DK's "Name (ID)" cells reduced to the ID."""
+    import re
+    return [[(m.group(1) if (m := re.fullmatch(r".*\((\d+)\)", c.strip())) else c) for c in r]
+            for r in csv.reader(open(path))]
+
+
 @pytest.fixture
 def cfg(tmp_path):
     # allow_lookahead: the fake backend cannot see the future, and the fixed clock is in the past once the date passes
@@ -51,7 +58,7 @@ def cfg(tmp_path):
 def test_run_writes_legal_upload_and_report(cfg):
     res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
     assert check_legal(res.contest, res.final) == []
-    rows = list(csv.reader(open(res.upload_path)))
+    rows = _rows(res.upload_path)
     assert rows[0] == res.contest.slot_headers and rows[1] == [s.site_id for s in res.final.slots]
     for name in ("contest.json", "baseline.json", "dossiers.json", "projections.json", "report.json", "report.md"):
         assert (res.run_dir / name).exists()
@@ -96,7 +103,7 @@ def test_user_rules_second_lineup(cfg):
 
 def test_entries_file_gets_one_lineup_per_entry(cfg):
     res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
-    rows = list(csv.reader(open(res.upload_path)))
+    rows = _rows(res.upload_path)
     assert rows[0][:4] == ["Entry ID", "Contest Name", "Contest ID", "Entry Fee"]
     assert len(rows) - 1 == len(res.contest.entries)
     locked_id = res.contest.entries[0].current[0]
@@ -134,7 +141,7 @@ def test_lastcall_keeps_started_players(cfg):
 
 def test_safety_upload_keeps_locked_cells(cfg):
     res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
-    rows = list(csv.reader(open(res.run_dir / "upload_safety.csv")))
+    rows = _rows(res.run_dir / "upload_safety.csv")
     assert len(rows) - 1 == len(res.contest.entries)
     assert rows[1][4] == res.contest.entries[0].current[0]  # locked QB kept in the safety file too
 
@@ -189,7 +196,7 @@ def test_lastcall_covers_every_entry(cfg):
     news = lambda t: {"updates": [{"player": name, "status": "out", "text": f"{name} ruled out", "source_url": "https://www.nfl.com/news/inactives"}]}
     early = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
     out = lastcall(res.run_dir, web=True, now=early, backend=fake(news=news), log=lambda s: None)
-    rows = list(csv.reader(open(res.run_dir / "upload_final.csv")))
+    rows = _rows(res.run_dir / "upload_final.csv")
     assert len(rows) - 1 == 3  # every entry is in the final file
     assert out["entries"]["repaired"] >= 1 and out["entries"]["could_not_repair"] == []
     assert rows[1][4] == locked_qb  # entry 1's locked QB is untouched
@@ -239,7 +246,7 @@ ET_ = timezone(timedelta(hours=-4))  # EDT on 2026-10-25
 
 
 def _cells(path):
-    rows = list(csv.reader(open(path)))
+    rows = _rows(path)
     return {r[0]: r[4:13] for r in rows[1:]}
 
 
@@ -372,7 +379,7 @@ def test_rules_lineup_keeps_the_first_entrys_locks(cfg):
     cfg.user_rules = UserRules(lock=[some])
     res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
     assert res.rules_upload_path is not None
-    rows = list(csv.reader(open(res.rules_upload_path)))
+    rows = _rows(res.rules_upload_path)
     assert rows[1][4] == res.contest.entries[0].current[0]  # the first entry's LOCKED QB
 
 

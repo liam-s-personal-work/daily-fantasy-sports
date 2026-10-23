@@ -55,6 +55,9 @@ site's `(LOCKED)` cells stay where they are.
 Keep your contest files wherever you like. In the repo folder, `DK*.csv`, `FD*.csv`, `FanDuel*.csv` and
 `*contest-standings*.csv` are git-ignored, so they are never committed by accident.
 
+Upload files name every player. DraftKings cells use DK's own `Name (ID)` text, which DK accepts; FanDuel
+cells stay as IDs, with a `*_readable.csv` copy that shows the names.
+
 Pick rules (`--rules`) are a small YAML file; see [examples/my_rules.yaml](examples/my_rules.yaml).
 
 Inside Claude Code, the `/dfs` skill runs the same steps.

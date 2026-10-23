@@ -1,10 +1,14 @@
 """Write the upload file the site accepts back.
 
 - Entries file in -> edited entries file out (same metadata columns, slot header as the
-  site wrote it, one player ID per slot, only entries whose lineup changed unless asked).
-- Salary/player list in -> blank-template upload: slot header row then one row of IDs per lineup.
+  site wrote it, one player per slot, only entries whose lineup changed unless asked).
+- Salary/player list in -> blank-template upload: slot header row then one row per lineup.
 
-DK accepts the bare ``ID`` (or "Name (ID)"); FD accepts the ``Id`` ("123-456"). We write IDs.
+DK accepts the bare ``ID`` or its own "Name (ID)" text (its entries file, instruction 4: "Use data
+from the Name+ID column or the ID column; you cannot use just the player's name"), so DK cells are
+written as "Name (ID)": readable, and still exactly what DK prints. FD's slot cells take the bare
+``Id`` ("123-456"; whether FD accepts "Id:Name" is unverified), so FD uploads keep IDs and a
+``*_readable.csv`` copy with names is written next to them. Lock checks always compare IDs.
 """
 
 from __future__ import annotations
@@ -27,13 +31,31 @@ def _ids(contest: Contest, lineup: Lineup) -> list[str]:
     return [s.site_id for s in lineup.slots]
 
 
+def name_cell(contest: Contest, site_id: str) -> str:
+    """"Name (ID)" for a site ID: the site's own Name + ID text when the file has it."""
+    for c in contest.candidates:
+        if c.site_id == site_id:
+            if c.display and c.display.strip().endswith(f"({site_id})"):
+                return c.display.strip()
+            p = contest.players.get(c.player_key)
+            return f"{p.name if p else c.player_key} ({site_id})"
+    return site_id
+
+
+def _cells(contest: Contest, ids: list[str], names: bool) -> list[str]:
+    return [name_cell(contest, i) if names and i else i for i in ids]
+
+
 def upload_rows(contest: Contest, lineups: list[Lineup], entry_ids: list[str] | None = None,
-                only_changed: bool = True, started_ids: set[str] | None = None) -> list[list[str]]:
+                only_changed: bool = True, started_ids: set[str] | None = None,
+                names: bool | None = None) -> list[list[str]]:
     """Rows for the upload CSV. With entries, lineup i goes to entry_ids[i] (default: file order).
-    ``started_ids``: players whose games have started; their cells must not change and they cannot be added."""
+    ``started_ids``: players whose games have started; their cells must not change and they cannot be added.
+    ``names``: write "Name (ID)" cells (default: on for DraftKings, which accepts them)."""
     live = started_ids or set()
+    names = contest.rules.site == Site.DRAFTKINGS if names is None else names
     if not contest.entries:
-        return [list(contest.slot_headers)] + [_ids(contest, lu) for lu in lineups]
+        return [list(contest.slot_headers)] + [_cells(contest, _ids(contest, lu), names) for lu in lineups]
 
     by_id = {e.entry_id: e for e in contest.entries}
     ids = entry_ids or [e.entry_id for e in contest.entries][:len(lineups)]
@@ -58,7 +80,7 @@ def upload_rows(contest: Contest, lineups: list[Lineup], entry_ids: list[str] | 
             continue
         meta = [e.entry_id, e.contest_name, e.contest_id, e.entry_fee or ""] if contest.rules.site == Site.DRAFTKINGS \
             else [e.entry_id, e.contest_id, e.contest_name, e.entry_fee or ""]
-        rows.append(meta + new)
+        rows.append(meta + _cells(contest, new, names))
     return rows
 
 
@@ -66,12 +88,18 @@ def write_upload(contest: Contest, lineups: list[Lineup], path: str | Path, **kw
     """Validate first, then replace the file atomically: a failed check never leaves a broken upload."""
     path = Path(path)
     rows = upload_rows(contest, lineups, **kw)
+    _atomic_csv(path, rows)
+    if contest.rules.site != Site.DRAFTKINGS and not kw.get("names"):  # FD cells stay IDs: add a copy to read
+        _atomic_csv(path.with_name(f"{path.stem}_readable.csv"), upload_rows(contest, lineups, **kw, names=True))
+    return path
+
+
+def _atomic_csv(path: Path, rows: list[list[str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerows(rows)
     os.replace(tmp, path)
-    return path
 
 
 def upload_text(contest: Contest, lineups: list[Lineup], **kw) -> str:
