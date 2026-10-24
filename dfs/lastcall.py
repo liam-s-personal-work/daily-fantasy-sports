@@ -109,16 +109,16 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
     # 1. news on every pick (web) + any outs supplied by a structured refresh
     news: dict[str, dict] = {}
     news_failed: list[str] = []
-    # only players whose games have not started can still be swapped, so only they are checked
+    # every pick is checked: a started pick reported out cannot be swapped, but the user should know
     open_picks = [k for k in picks if not (c.players[k].start_time and c.players[k].start_time <= now)]
-    if web and open_picks:
-        results = await runner.run_all(agents.news_tasks(c, open_picks, now))
-        news = agents.parse_news(results, c, open_picks, now=now)
+    if web:
+        results = await runner.run_all(agents.news_tasks(c, picks, now))
+        news = agents.parse_news(results, c, picks, now=now)
         news_failed = [r.name.split(":", 1)[1] for r in results if not r.ok]  # games whose news check did not run
         for g in news_failed:
             log(f"WARNING: the news and inactives check failed for {g}: re-run the last call, or check by hand")
         silent = [c.players[k].name for k in open_picks if k not in news and c.players[k].game not in news_failed]
-        if silent:  # the check ran but said nothing about them: never read that as "all clear"
+        if silent:  # the check ran but said nothing about a swappable pick: never read that as "all clear"
             early_warnings.append(f"no news came back for {', '.join(silent)}: check them by hand before lock")
             log(f"WARNING: {early_warnings[-1]}")
     out = set(extra_out or set()) | {k for k, u in news.items() if u.get("status") in BAD}

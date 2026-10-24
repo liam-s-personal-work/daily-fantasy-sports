@@ -504,3 +504,10 @@ def test_explain_command_and_last_call_explainer(cfg, capsys):
              log=lambda s: None)
     rows = list(csv.reader(open(res.run_dir / "lineup_explained_final.csv")))
     assert rows[0][0] == "Slot" and sum(1 for r in rows[1:] if r[0]) == len(res.contest.entries) * 9
+
+
+def test_lastcall_flags_a_swappable_pick_the_news_says_nothing_about(cfg):
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    out = lastcall(res.run_dir, web=True, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc),
+                   backend=fake(news=lambda t: {"updates": []}), log=lambda s: None)
+    assert any("no news came back" in w for w in out["warnings"])
