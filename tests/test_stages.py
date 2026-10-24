@@ -524,3 +524,11 @@ def test_fantasy_news_sources_are_blocked(url):
 def test_league_and_news_sources_stay_allowed():
     assert not host_blocked("https://www.cbssports.com/nba/news/hornets-injury-report/")
     assert not host_blocked("https://www.nba.com/news/injury-report")
+
+
+def test_a_live_report_stamped_seconds_after_the_run_start_is_kept():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 10, 24, 18, 49, 43, tzinfo=timezone.utc)
+    assert not agents._after("2026-10-24T18:49:53Z", now)  # written 10 s into the last call
+    assert agents._after((now + timedelta(hours=3)).isoformat(), now)  # a past-slate run still cannot see results
+    assert agents._after("2026-10-26", now)

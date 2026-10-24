@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dfs.io.contest_file import norm_name
 from dfs.llm import prompts, schemas
@@ -193,14 +193,18 @@ def research_tasks(contest: Contest, known: dict[str, str], market: dict[str, st
     return tasks
 
 
+AS_OF_SLACK = timedelta(minutes=30)  # agents stamp live reports with their own clock, seconds after the run's start
+
+
 def _after(as_of: str | None, now: datetime | None) -> bool:
-    """True when the fact's stated time (or date) is later than ``now`` (a past-slate run must not see the future)."""
+    """True when the fact's stated time (or date) is later than ``now`` (a past-slate run must not see the future).
+    A time within ``AS_OF_SLACK`` of ``now`` counts as now: a live check's report is written while it runs."""
     if not as_of or now is None:
         return False
     try:
         t = datetime.fromisoformat(as_of.strip().replace("Z", "+00:00"))
         if t.tzinfo is not None:
-            return t > now
+            return t > now + AS_OF_SLACK
     except ValueError:
         pass
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", as_of)
