@@ -278,6 +278,11 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
                "metric": metric, "current": cur.metrics, "new": new.metrics, "final": chosen, "upload": str(path),
                "llm": runner.summary()}
     (run_dir / "lastcall.json").write_text(json.dumps(summary, indent=1, default=lambda o: o.model_dump() if hasattr(o, "model_dump") else str(o)))
+    try:  # readable reasoning and ranges for what the last call leaves in place
+        from dfs.explain import write_explained
+        write_explained(run_dir, "lineup_explained_final.csv", [lu.model_dump() for lu in final_lus])
+    except Exception as e:
+        log(f"lineup_explained_final.csv not written: {e}")
     return summary
 
 

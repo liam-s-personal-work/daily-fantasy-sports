@@ -480,3 +480,27 @@ def test_lastcall_summary_reads_named_cells(cfg, capsys):
     main(["lastcall", str(res.run_dir), "--no-web", "--now", "2026-10-25T12:30:00+00:00"])
     out = capsys.readouterr().out
     assert "slot(s) changed" not in out and "unchanged" in out
+
+
+def test_run_writes_a_readable_explainer_next_to_the_upload(cfg):
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    rows = list(csv.reader(open(res.run_dir / "lineup_explained.csv")))
+    from dfs.explain import HEADER
+    assert rows[0] == HEADER and len(rows) == 1 + len(res.final.slots)
+    upload = list(csv.reader(open(res.upload_path)))[1]
+    # the same players in slot order (the upload keeps DK's exact text, e.g. "Dolphins  (id)" with two spaces)
+    assert [" ".join(r[1].split()) for r in rows[1:]] == [" ".join(c.split()) for c in upload]
+    for r, s in zip(rows[1:], res.final.slots):
+        pr = res.projections[s.player_key]
+        assert r[5] == f"{pr.mean:.1f}" and r[6] == f"{pr.p10:.0f}-{pr.p90:.0f}" and r[8]  # mean, range, reasoning
+
+
+def test_explain_command_and_last_call_explainer(cfg, capsys):
+    from dfs.cli import main
+    res = run(FIX / "dk_entries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    (res.run_dir / "lineup_explained.csv").unlink()
+    assert main(["explain", str(res.run_dir)]) == 0 and (res.run_dir / "lineup_explained.csv").exists()
+    lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc), backend=fake(),
+             log=lambda s: None)
+    rows = list(csv.reader(open(res.run_dir / "lineup_explained_final.csv")))
+    assert rows[0][0] == "Slot" and sum(1 for r in rows[1:] if r[0]) == len(res.contest.entries) * 9

@@ -28,6 +28,7 @@ goes to `~/.cache/dfs`; set `DFS_CACHE_DIR` to put it anywhere else.
 dfs parse    DKEntries.csv                      # what was detected, and every warning (no model calls)
 dfs run      DKEntries.csv --rules my_rules.yaml --field-size 5000
                                                 # -> runs/<id>/upload.csv, upload_my_rules.csv, report.md
+dfs explain  runs/<id>                          # lineup_explained.csv: each pick's reasoning and point range
 dfs windows  runs/<id>                          # when to run the last call for each kickoff window
 dfs lastcall runs/<id>                          # news + inactives on every pick -> runs/<id>/upload_final.csv
 dfs grade    runs/<id> [--standings contest-standings.csv]   # after the slate: score, best lineup, failed step
@@ -54,6 +55,10 @@ site's `(LOCKED)` cells stay where they are.
 
 Keep your contest files wherever you like. In the repo folder, `DK*.csv`, `FD*.csv`, `FanDuel*.csv` and
 `*contest-standings*.csv` are git-ignored, so they are never committed by accident.
+
+Each run also writes `lineup_explained.csv` (and the last call `lineup_explained_final.csv`): every pick with
+its reasoning, projected points, the 10th-90th percentile range and the chance he sits. It is for reading;
+upload `upload.csv`.
 
 Upload files name every player. DraftKings cells use DK's own `Name (ID)` text, which DK accepts; FanDuel
 cells stay as IDs, with a `*_readable.csv` copy that shows the names.

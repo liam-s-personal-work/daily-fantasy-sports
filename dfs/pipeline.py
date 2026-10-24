@@ -386,6 +386,11 @@ async def run_async(contest_path: str | Path, cfg: RunConfig | None = None, back
     }
     _save(run_dir, "report.json", report)
     (run_dir / "report.md").write_text(decider.markdown(decision, clock.marks, runner.summary()))
+    try:  # a readable copy of the picks with reasoning and ranges; never blocks the upload
+        from dfs.explain import write_explained
+        write_explained(run_dir)
+    except Exception as e:
+        log(f"lineup_explained.csv not written: {e}")
     clock.mark(f"wrote {upload}")
     return RunResult(run_dir=run_dir, contest=contest, final=decision.final, rules_lineup=decision.rules_lineup,
                      projections=projections, report=report, upload_path=upload, rules_upload_path=rules_upload,

@@ -4,6 +4,7 @@
     dfs run    DKEntries.csv [--no-web] ...    # the main run -> runs/<id>/upload.csv + report.md
     dfs windows  runs/<id>                     # when to run the last call for each kickoff window
     dfs lastcall runs/<id>                     # last-hour news/inactives check -> upload_final.csv
+    dfs explain  runs/<id>                     # lineup_explained.csv: each pick's reasoning and point range
     dfs grade  runs/<id> [--standings contest-standings.csv]
     dfs backtest --season 2026 --weeks 3-6     # baseline accuracy on real games
     dfs rules  [key]                           # saved contest rules and how well they are verified
@@ -71,6 +72,12 @@ def _run(args) -> int:
         err = res.report.get("decision", {}).get("user_rules_error", "unknown reason")
         print(f"WARNING: no lineup with your rules: {err}")
     print(f"report: {res.run_dir / 'report.md'}")
+    return 0
+
+
+def _explain(args) -> int:
+    from dfs.explain import write_explained
+    print(f"wrote {write_explained(Path(args.run_dir))}")
     return 0
 
 
@@ -184,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--entries", help="a freshly downloaded entries file (the site's current lineups and LOCKED cells)")
     s.set_defaults(fn=_lastcall)
 
+    s = sub.add_parser("explain", help="write lineup_explained.csv: each pick's reasoning and point range")
+    s.add_argument("run_dir"); s.set_defaults(fn=_explain)
     s = sub.add_parser("windows"); s.add_argument("run_dir"); s.add_argument("--lead", type=int, default=60)
     s.set_defaults(fn=_windows)
 
