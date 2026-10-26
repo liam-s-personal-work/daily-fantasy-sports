@@ -1,8 +1,9 @@
 """Build historical NBA DK classic slates for the oracle-gap backtest.
 
 One slate per regular-season night with 2+ games. Every row is a player active that night (in the
-box score, played or not); injured/inactive players are not in the pool, as on a site with the
-injury report known. Columns:
+box score, played or not; a DNP with a stated reason such as an injury, illness, rest or suspension
+is on the injury report before tip and is left out); injured/inactive players are not in the pool,
+as on a site with the injury report known. Columns:
 
 - keys: slate (date), athlete_id, name, team, opp, game, pos (DK eligibility set), salary (DK-like
   model fit on real DK files, scripts/oracle/nba_salary.py), actual (DK points that night);
@@ -67,6 +68,10 @@ def opp_allowed(box: pd.DataFrame, cutoff, season: int) -> dict[str, float]:
 def build_night(date: str) -> pd.DataFrame:
     box = _box()
     night = box[(box["game_date"].astype(str) == date) & (box["season_type"] == 2)]
+    # an absence with a stated reason (injury, illness, rest, suspension, not with team) is on the injury report
+    # before tip, so the player is not in the pool; only coach's decisions stay (they can still sit at 0)
+    reason = night["reason"].fillna("").astype(str).str.strip().str.upper() if "reason" in night else ""
+    night = night[~(night["did_not_play"] & (reason != "COACH'S DECISION"))]
     games = night["game_id"].unique()
     if len(games) < 2:
         return pd.DataFrame()

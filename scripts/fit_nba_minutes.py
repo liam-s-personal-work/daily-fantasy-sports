@@ -2,9 +2,11 @@
 
     python3 scripts/oracle/nba_slates.py              # historical nights -> data/cache/oracle/nba_slates.parquet
     python3 scripts/fit_nba_minutes.py                # train on every completed night, save boosters + json
-    python3 scripts/fit_nba_minutes.py --reproduce    # train on 2024-25 only and compare with the experiment's
-                                                      # test predictions (exp_minutes.parquet): proves the shipped
-                                                      # feature code is the one that was evaluated
+    python3 scripts/fit_nba_minutes.py --holdout      # train on 2024-25 only and score 2025-26 + 2026-27 against
+                                                      # the ex-post optimal lineup (dfs.oracle): the shipped code's
+                                                      # held-out result, next to the engine without the model
+
+``--features PATH`` reuses (or, if missing, writes) the feature table, which takes a few minutes to build.
 """
 
 from __future__ import annotations
@@ -35,25 +37,50 @@ def features(seasons: list[int]) -> pd.DataFrame:
     return nm.build_features(slates, box).reset_index(drop=True)
 
 
+def cached_features(seasons: list[int], path: str | None) -> pd.DataFrame:
+    if path and Path(path).exists():
+        df = pd.read_parquet(path)
+        return df[df["season"].isin(seasons)].reset_index(drop=True)
+    df = features(seasons)
+    if path:
+        df.to_parquet(path)
+    return df
+
+
+def holdout(df: pd.DataFrame) -> pd.DataFrame:
+    """Fit both tiers on 2024-25, predict 2025-26 and 2026-27 (DK points = P(plays) x minutes x engine rate)."""
+    sys.path.insert(0, str(ROOT / "scripts/oracle"))
+    from evaluate import run, summary
+
+    tr, te = df[df["season"] == 2025], df[df["season"].isin([2026, 2027])].copy()
+    for tier, cols in (("main", nm.MAIN), ("lastcall", nm.LASTCALL)):
+        c, r = nm.fit(tr, cols, nm.ROUNDS[tier])
+        te[f"minutes_{tier}"] = c.predict_proba(te[cols])[:, 1] * np.clip(r.predict(te[cols]), 0, 48) * te["rate"].to_numpy()
+    pred = te[["slate", "athlete_id", "minutes_main", "minutes_lastcall"]].drop_duplicates(["slate", "athlete_id"])
+    slates = pd.read_parquet(SLATES)
+    slates = slates[slates["season"].isin([2026, 2027])].merge(pred, on=["slate", "athlete_id"], how="left")
+    for c in ("minutes_main", "minutes_lastcall"):
+        slates[c] = slates[c].fillna(slates["engine"])  # All-Star nights: not modelled, engine stands
+    cols = ["engine", "minutes_main", "minutes_lastcall"]
+    res = run(slates, cols, "nba")
+    print(summary(res, cols))
+    for s, g in res.groupby("season"):
+        print(f"season {s}: " + ", ".join(f"{c} {100 * g[f'{c}:pct'].mean():.2f}%" for c in cols) + f" (n={len(g)})")
+    return res
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seasons", default="2025,2026,2027")
-    ap.add_argument("--reproduce", action="store_true")
+    ap.add_argument("--holdout", action="store_true")
+    ap.add_argument("--features", help="feature table cache (parquet)")
     ap.add_argument("--out", default=str(nm.LEARNED))
     a = ap.parse_args()
-    if a.reproduce:
-        df = features([2025, 2026, 2027])
-        tr, te = df[df["season"] == 2025], df[df["season"].isin([2026, 2027])].copy()
-        c, r = nm.fit(tr, nm.MAIN, nm.ROUNDS["main"])
-        p, m = c.predict_proba(te[nm.MAIN])[:, 1], np.clip(r.predict(te[nm.MAIN]), 0, 48)
-        te["mine"] = p * m * te["rate"].to_numpy()
-        ref = pd.read_parquet(ROOT / "data/cache/oracle/exp_minutes.parquet")
-        j = te.merge(ref[["slate", "athlete_id", "minutes_main"]], on=["slate", "athlete_id"])
-        d = (j["mine"] - j["minutes_main"]).abs()
-        print(f"{len(j)} test rows: max |diff| {d.max():.4f}, mean {d.mean():.5f}, corr {j['mine'].corr(j['minutes_main']):.6f}")
-        return 0 if d.mean() < 0.05 else 1
+    if a.holdout:
+        holdout(cached_features([2025, 2026, 2027], a.features))
+        return 0
     seasons = [int(s) for s in a.seasons.split(",")]
-    df = features(seasons)
+    df = cached_features(seasons, a.features)
     models = {"main": nm.fit(df, nm.MAIN, nm.ROUNDS["main"]), "lastcall": nm.fit(df, nm.LASTCALL, nm.ROUNDS["lastcall"])}
     nm.save(models, {"trained_on_seasons": seasons, "nights": int(df["slate"].nunique()), "rows": int(len(df)),
                      "last_night": str(df["slate"].max()), "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),

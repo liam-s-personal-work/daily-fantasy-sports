@@ -165,17 +165,18 @@ def build_features(slates: pd.DataFrame, box: pd.DataFrame, cutoffs: dict | None
         idx = {a: i for i, a in enumerate(d["athlete_id"].to_numpy())}
         # own logs
         for i, a in enumerate(d["athlete_id"].to_numpy()):
+            # rest history for everyone, before the played-games check: whether a player has a played game
+            # anywhere in ``box`` would otherwise tell the model he plays tonight or later
+            r = rest_ev.get(a)
+            nr = int(np.searchsorted(r[0], cutoff, "left")) if r is not None else 0
+            b2b, sat = (r[1][:nr], r[2][:nr]) if r is not None else (np.zeros(0, bool), np.zeros(0))
+            nb, na = int(b2b.sum()), int((~b2b).sum())
+            f["rest_b2b_n"][i], f["rest_any_n"][i] = nb, na
+            f["rest_b2b"][i] = (sat[b2b].sum() + 2 * 0.05) / (nb + 2)
+            f["rest_any"][i] = (sat[~b2b].sum() + 4 * 0.03) / (na + 4)
             o = own.get(a)
             if o is None:
                 continue
-            r = rest_ev.get(a)
-            if r is not None:
-                nr = int(np.searchsorted(r[0], cutoff, "left"))
-                b2b, sat = r[1][:nr], r[2][:nr]
-                nb, na = int(b2b.sum()), int((~b2b).sum())
-                f["rest_b2b_n"][i], f["rest_any_n"][i] = nb, na
-                f["rest_b2b"][i] = (sat[b2b].sum() + 2 * 0.05) / (nb + 2)
-                f["rest_any"][i] = (sat[~b2b].sum() + 4 * 0.03) / (na + 4)
             n = int(np.searchsorted(o[0], cutoff, "left"))
             if n == 0:
                 continue

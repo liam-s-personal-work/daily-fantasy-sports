@@ -265,6 +265,25 @@ def test_shipped_minutes_model_loads_and_predicts_on_live_features(tmp_path):
     assert any("minutes model applied" in n for n in notes) and all(v is not None and 0 <= v <= 48 for v in vals)
 
 
+def test_minutes_features_never_see_later_games():
+    """A player in uniform with no minutes yet gets the same features whether or not he plays after tonight."""
+    from dfs.projections import nba_minutes as nm
+    box, ids = _box()
+    opener = box[(box["team_abbreviation"] == "NY") & (box["season"] == 2027)]["game_id"].iloc[0]
+    rookie = nba.normalize(pd.DataFrame([_row(9001, "Rookie", "NY", "YYY", "2026-10-21T23:30:00Z", 2027, 0, 0,
+                                              dnp=True, starter=False, gid=opener)]))
+    later = nba.normalize(pd.DataFrame([_row(9001, "Rookie", "NY", "BOS", "2026-10-25T23:00:00Z", 2027, 25, 12,
+                                             gid=4242)]))
+    names = ROSTER["NYK"][:6]
+    slate = pd.DataFrame({"slate": "live", "season": 2027, "athlete_id": [ids[n] for n in names] + [9001],
+                          "team": "NY", "opp": "BOS", "pos": "G", "minutes": 25.0, "p_zero": 0.0})
+    cut = {"live": pd.Timestamp(TIP)}
+    a = nm.build_features(slate, pd.concat([box, rookie], ignore_index=True), cutoffs=cut)
+    b = nm.build_features(slate, pd.concat([box, rookie, later], ignore_index=True), cutoffs=cut)
+    pd.testing.assert_frame_equal(a[nm.NEW_FEATS].reset_index(drop=True), b[nm.NEW_FEATS].reset_index(drop=True))
+    assert a.loc[a["athlete_id"] == 9001, "rest_any"].notna().all()  # the prior, not a missing value
+
+
 def _starters_result(game, team, names, confirmed=True, url="https://www.nba.com/news/knicks-lineup",
                      as_of="2026-10-23T22:30:00Z"):
     from dfs.llm.backend import AgentResult

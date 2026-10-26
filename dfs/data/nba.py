@@ -33,7 +33,7 @@ DATASETS: dict[str, tuple[str, str]] = {
 BOX_COLUMNS = ["game_id", "season", "season_type", "game_date", "game_date_time", "athlete_id", "athlete_display_name",
                "team_abbreviation", "opponent_team_abbreviation", "home_away", "minutes", "points",
                "three_point_field_goals_made", "rebounds", "assists", "steals", "blocks", "turnovers", "starter",
-               "did_not_play", "athlete_position_abbreviation"]
+               "did_not_play", "reason", "athlete_position_abbreviation"]
 LOAD_WARNINGS: list[str] = []
 
 # DK / FD team codes -> ESPN codes in the box scores
