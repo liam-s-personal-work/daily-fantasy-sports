@@ -217,25 +217,41 @@ def reconcile_minutes(contest: Contest, baseline: dict[str, Projection], total: 
     return out, factors
 
 
+def lastcall_projections(contest: Contest, dossiers: dict, excluded: set[str], starters: dict[str, set[str]],
+                         now: datetime, season: int | None = None,
+                         provider: "NBAProvider | None" = None) -> tuple[dict[str, Projection], list[str]]:
+    """Re-project an NBA slate at last call: the same baseline (only games before the first tip), the run's
+    research statuses, the players ruled out since, and the starter-aware minutes tier for confirmed lineups."""
+    from dfs.stages import agents
+
+    prov = provider or NBAProvider(season=season)
+    ctx = prov.prepare(contest, now=now)
+    base = {k: v for k, v in ctx.baseline.items() if k not in excluded and k not in ctx.ruled_out}
+    statused, _ = agents.apply_status(contest, dossiers, base)
+    return prov.after_research(contest, statused, starters=starters)
+
+
 class NBAProvider:
     name = "nba"
 
-    def after_research(self, contest: Contest, baseline: dict[str, Projection]) -> tuple[dict[str, Projection], list[str]]:
+    def after_research(self, contest: Contest, baseline: dict[str, Projection],
+                       starters: dict[str, set[str]] | None = None) -> tuple[dict[str, Projection], list[str]]:
         """Called once tonight's statuses are applied: team minutes are reconciled, then the learned minutes
         model (``dfs.projections.nba_minutes``, if its files are in data/learned/) re-estimates each matched
         player's chance of playing and minutes from tonight's roster. Research statuses still apply on top."""
         out, factors = reconcile_minutes(contest, baseline)
         notes = [f"{t}: regulars' minutes x{f} (players returning from injury share the 242)" for t, f in sorted(factors.items())]
         try:
-            out, n = self._apply_minutes_model(contest, out, baseline)
+            out, n = self._apply_minutes_model(contest, out, baseline, starters or {})
             if n:
-                notes.append(f"minutes model applied to {n} players")
+                notes.append(f"minutes model applied to {n} players"
+                             + (f" (confirmed starters for {len(starters)} teams)" if starters else ""))
         except Exception as e:  # the learned layer never blocks a run: the baseline stands
             notes.append(f"minutes model not applied ({e})")
         return out, notes
 
-    def _apply_minutes_model(self, contest: Contest, out: dict[str, Projection],
-                             statused: dict[str, Projection]) -> tuple[dict[str, Projection], int]:
+    def _apply_minutes_model(self, contest: Contest, out: dict[str, Projection], statused: dict[str, Projection],
+                             starters: dict[str, set[str]]) -> tuple[dict[str, Projection], int]:
         live = getattr(self, "_live", None)
         if live is None:
             return out, 0
@@ -265,6 +281,17 @@ class NBAProvider:
                          "minutes": float(out[k].components.get("minutes", f["minutes"])), "vacated_min": vac[f["team"]]})
         feats = nm.build_features(pd.DataFrame(rows), self.box, cutoffs={"live": live["cutoff"]})
         p_play, mins = model.predict(feats)
+        # last call: teams whose starting five is confirmed use the starter-aware tier (public ~30 min before tip)
+        lc_teams = {nbadata.espn_team(t) for t in starters}
+        lc = nm.MinutesModel.load(self.minutes_dir, "lastcall") if lc_teams else None
+        if lc is not None:
+            starting = {k for ks in starters.values() for k in ks}
+            feats["starter_tonight"] = [float(k in starting) for k in feats["key"]]
+            sel = feats["team"].isin(lc_teams).to_numpy()
+            if sel.any():
+                pp_lc, m_lc = lc.predict(feats[sel])
+                p_play, mins = p_play.copy(), mins.copy()
+                p_play[sel], mins[sel] = pp_lc, m_lc
         res = dict(out)
         for (k, pp, m) in zip(feats["key"], p_play, mins):
             f, pr = info[k], out[k]

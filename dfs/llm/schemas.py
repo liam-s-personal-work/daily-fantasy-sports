@@ -130,6 +130,27 @@ BACKUP = {
     "required": ["adjustments", "remove"],
 }
 
+STARTERS = {
+    "type": "object",
+    "properties": {
+        "teams": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "team": {"type": "string"},
+                    "confirmed": {"type": "boolean", "description": "true only for announced/confirmed starters"},
+                    "starters": {"type": "array", "items": {"type": "string"}},
+                    "source_url": {"type": "string"},
+                    "as_of": {"type": "string"},
+                },
+                "required": ["team", "confirmed", "starters"],
+            },
+        },
+    },
+    "required": ["teams"],
+}
+
 NEWS = {
     "type": "object",
     "properties": {

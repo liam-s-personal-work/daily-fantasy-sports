@@ -532,6 +532,46 @@ def news_tasks(contest: Contest, keys: list[str], now: datetime, *, model: str =
     return tasks
 
 
+def starters_tasks(contest: Contest, games: list[str], now: datetime, *, model: str = "sonnet",
+                   max_searches: int = 3) -> list[AgentTask]:
+    """NBA last call: one lineup check per open game (both teams' confirmed starting fives)."""
+    tasks = []
+    for g in games:
+        players = [p for p in contest.players.values() if p.game == g]
+        tip = next((p.start_time.isoformat() for p in players if p.start_time), "unknown")
+        lines = "\n".join(f"- {p.name} | {p.team}" for p in players)
+        tasks.append(AgentTask(stage="starters", name=f"starters:{g}", model=model, tools=["WebSearch", "WebFetch"],
+                               system=prompts.STARTERS_SYSTEM.format(max_searches=max_searches),
+                               prompt=prompts.STARTERS_PROMPT.format(now=now.isoformat(), game=g, tip=tip, players=lines),
+                               schema=schemas.STARTERS, max_turns=max_searches * 2 + 4, timeout_s=300, cacheable=False))
+    return tasks
+
+
+def parse_starters(results: list[AgentResult], contest: Contest, now: datetime | None = None,
+                   min_matched: int = 4) -> dict[str, set[str]]:
+    """team -> player keys of tonight's confirmed starters. Code decides: a team counts only when the source
+    is cited, allowed and not dated after now, the lineup is marked confirmed, and at least ``min_matched`` of
+    its names match players of that team on the slate."""
+    out: dict[str, set[str]] = {}
+    for r in results:
+        if not r.ok or not r.output:
+            continue
+        g = r.name.split(":", 1)[1]
+        teams_in_game = {p.team for p in contest.players.values() if p.game == g}
+        for t in r.output.get("teams", []):
+            url = t.get("source_url") or ""
+            if not t.get("confirmed") or not re.match(r"https?://\S+", url) or host_blocked(url) or _after(t.get("as_of"), now):
+                continue
+            team = next((x for x in teams_in_game if same_team(t.get("team", ""), x, contest.rules.sport)), None)
+            if team is None:
+                continue
+            by_name = {key_name(k, contest): k for k, p in contest.players.items() if p.team == team}
+            keys = {by_name[n] for n in (_subject_name(s) for s in t.get("starters", [])) if n in by_name}
+            if len(keys) >= min_matched:
+                out[team] = keys
+    return out
+
+
 def parse_news(results: list[AgentResult], contest: Contest, keys: list[str],
                now: datetime | None = None) -> dict[str, dict]:
     """player_key -> latest update dict (only for players named in the update)."""

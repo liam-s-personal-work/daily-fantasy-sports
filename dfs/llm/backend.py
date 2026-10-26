@@ -158,7 +158,8 @@ class FakeBackend:
 
 # What one task of each stage usually costs (USD); reserved against the run budget while it runs, so
 # tasks started side by side cannot overshoot it together.
-STAGE_COST_EST = {"research": 0.35, "forecast": 0.35, "strategist": 0.2, "backup": 0.08, "checker": 0.15, "news": 0.2}
+STAGE_COST_EST = {"research": 0.35, "forecast": 0.35, "strategist": 0.2, "backup": 0.08, "checker": 0.15, "news": 0.2,
+                  "starters": 0.08}
 
 
 class Runner:

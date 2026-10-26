@@ -263,3 +263,86 @@ def test_shipped_minutes_model_loads_and_predicts_on_live_features(tmp_path):
     out, notes = prov.after_research(c, ctx.baseline)
     vals = [pr.components.get("minutes_model") for pr in out.values()]
     assert any("minutes model applied" in n for n in notes) and all(v is not None and 0 <= v <= 48 for v in vals)
+
+
+def _starters_result(game, team, names, confirmed=True, url="https://www.nba.com/news/knicks-lineup",
+                     as_of="2026-10-23T22:30:00Z"):
+    from dfs.llm.backend import AgentResult
+    return AgentResult(name=f"starters:{game}", ok=True, output={"teams": [
+        {"team": team, "confirmed": confirmed, "starters": names, "source_url": url, "as_of": as_of}]})
+
+
+def test_parse_starters_counts_only_confirmed_cited_lineups(tmp_path):
+    c = _contest(tmp_path)
+    now = datetime(2026, 10, 23, 22, 40, tzinfo=timezone.utc)
+    five = ROSTER["NYK"][:5]
+    ok = agents.parse_starters([_starters_result("NYK@BOS", "NYK", five)], c, now)
+    assert {c.players[k].name for k in ok["NYK"]} == set(five)
+    for bad in (_starters_result("NYK@BOS", "NYK", five, confirmed=False),
+                _starters_result("NYK@BOS", "NYK", five, url="https://www.rotoballer.com/x"),
+                _starters_result("NYK@BOS", "NYK", five, url=""),
+                _starters_result("NYK@BOS", "NYK", five, as_of="2026-10-24T03:00:00Z"),
+                _starters_result("NYK@BOS", "NYK", ["Nobody One", "Nobody Two", "Jalen Brunson"])):
+        assert agents.parse_starters([bad], c, now) == {}
+
+
+class _TierStub:
+    def __init__(self, tier):
+        self.tier = tier
+
+    def predict(self, feats):
+        if self.tier == "main":
+            return np.full(len(feats), 0.9), np.full(len(feats), 20.0)
+        st = feats["starter_tonight"].to_numpy()
+        return np.full(len(feats), 0.95), np.where(st == 1, 34.0, 15.0)
+
+
+def test_confirmed_starters_switch_their_team_to_the_starter_aware_tier(tmp_path, monkeypatch):
+    from dfs.projections import nba_minutes as nm
+    from dfs.projections.nba_provider import lastcall_projections
+    monkeypatch.setattr(nm.MinutesModel, "load", classmethod(lambda cls, folder=None, tier="main": _TierStub(tier)))
+    c = _contest(tmp_path)
+    five = {k for k, p in c.players.items() if p.team == "NYK" and p.name in ROSTER["NYK"][:5]}
+    out, notes = lastcall_projections(c, {}, set(), {"NYK": five}, TIP, provider=NBAProvider(box=_box()[0]))
+    assert any("confirmed starters for 1 teams" in n for n in notes)
+    for k, pr in out.items():
+        team = c.players[k].team
+        want = 34.0 if k in five else 15.0 if team == "NYK" else 20.0
+        assert pr.components["minutes_model"] == want, (c.players[k].name, team)
+
+
+@pytest.mark.network
+def test_nba_last_call_reprojects_with_confirmed_starters(tmp_path):
+    import json
+    import shutil
+    from pathlib import Path
+    from dfs.lastcall import lastcall
+    from dfs.llm.backend import FakeBackend
+    src = Path("runs/live_2026-10-23/dr-nba-classic-20261023-202049-49c83dbf")
+    if not src.exists():
+        pytest.skip("live NBA run not on this machine")
+    run_dir = tmp_path / src.name
+    shutil.copytree(src, run_dir)
+    rep = json.loads((run_dir / "report.json").read_text())
+    rep["config"]["allow_lookahead"] = True  # the slate is in the past now; the fake agents see nothing new
+    (run_dir / "report.json").write_text(json.dumps(rep))
+    c = json.loads((run_dir / "contest.json").read_text())
+    by_team = {}
+    for k, p in c["players"].items():
+        by_team.setdefault(p["team"], []).append(p["name"])
+
+    def starters(t):
+        game = t.name.split(":", 1)[1]
+        teams = game.split("@")
+        return {"teams": [{"team": tm, "confirmed": True, "starters": by_team[tm][:5],
+                           "source_url": "https://www.nba.com/news/lineups", "as_of": "2026-10-23T22:30:00Z"}
+                          for tm in teams if tm in by_team]}
+    be = FakeBackend({"news": lambda t: {"updates": []}, "starters": starters})
+    out = lastcall(run_dir, web=True, now=datetime(2026, 10, 23, 22, 35, tzinfo=timezone.utc), backend=be,
+                   log=lambda s: None)
+    assert len(out["starters"]) >= 10 and out["reprojected"] > 100
+    assert check_legal_ok(out)
+
+
+def check_legal_ok(out):
+    return out["final"] is not None and len(out["final"].slots) == 8

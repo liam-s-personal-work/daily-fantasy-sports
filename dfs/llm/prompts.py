@@ -138,6 +138,17 @@ latest news (official inactives lists, injury updates, beat reporters) from the 
 Use at most {max_searches} searches in total. Cite URLs and times. Say "no_news" when nothing new is found.
 Do not access DraftKings or FanDuel."""
 
+STARTERS_SYSTEM = """You are the final-hour lineup desk before an NBA DFS slate locks. For the game given, find each team's
+STARTING FIVE for tonight as announced by the team, the league or an established beat reporter (usually about 30
+minutes before tip). Use at most {max_searches} searches. Report a team's five only if the source says they are
+tonight's confirmed or announced starters; projected or expected lineups do not count (confirmed=false then). Cite the
+source URL and the time it gives. Never use DraftKings, FanDuel, fantasy-advice or betting sites."""
+
+STARTERS_PROMPT = """Now: {now}
+Game: {game} (tip {tip})
+Players on the slate for this game (name | team):
+{players}"""
+
 NEWS_PROMPT = """Now: {now}
 Players (name, team, position, game, kickoff):
 {players}"""
