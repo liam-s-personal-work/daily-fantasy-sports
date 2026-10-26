@@ -1,0 +1,77 @@
+{
+ "trained_on_seasons": [
+  2025,
+  2026,
+  2027
+ ],
+ "nights": 328,
+ "rows": 48839,
+ "last_night": "2026-10-25",
+ "created": "2026-10-26T17:58:41+00:00",
+ "source": "scripts/fit_nba_minutes.py (features: dfs.projections.nba_rate.build_rate_features)",
+ "features": [
+  "lr_3",
+  "lr_5",
+  "lr_10",
+  "lr_20",
+  "lr_40",
+  "cur_rate_rel",
+  "st_bn_rel",
+  "hi_lo_rel",
+  "wowy_rel",
+  "wowy_joint_rel",
+  "wowy_max",
+  "redist_rel",
+  "vac_dk_share",
+  "own_dk_share",
+  "n_absent",
+  "absent_w",
+  "pace_rel",
+  "opp_pos_rel",
+  "opp_allowed",
+  "home",
+  "rest_c",
+  "b2b",
+  "start_share",
+  "min_role",
+  "minutes",
+  "rate",
+  "pts_pm",
+  "reb_pm",
+  "ast_pm",
+  "tov_pm",
+  "grp",
+  "n_cur",
+  "n_prev",
+  "moved",
+  "vacated_min"
+ ],
+ "settings": {
+  "rounds": 700,
+  "seeds": [
+   0,
+   1,
+   2
+  ],
+  "alpha": 0.5,
+  "clip": 0.15,
+  "min_minutes": 6.0,
+  "rate_floor": 0.2,
+  "target_clip": [
+   0.25,
+   4.0
+  ]
+ },
+ "params": {
+  "objective": "l2",
+  "learning_rate": 0.02,
+  "num_leaves": 7,
+  "min_child_samples": 400,
+  "reg_lambda": 20.0,
+  "subsample": 0.8,
+  "subsample_freq": 1,
+  "colsample_bytree": 0.7,
+  "num_threads": 2,
+  "verbose": -1
+ }
+}

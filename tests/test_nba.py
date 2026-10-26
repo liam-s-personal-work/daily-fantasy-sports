@@ -223,9 +223,20 @@ class _StubModel:
         return np.full(len(feats), 0.9), np.full(len(feats), 30.0)
 
 
+class _StubRate:
+    """Stands in for the rate boosters: x1.1 on every player's points per minute (given the live rate features)."""
+
+    def multiplier(self, feats):
+        from dfs.projections import nba_rate as nr
+        assert feats[nr.FEATS].shape == (len(feats), len(nr.FEATS))
+        return np.full(len(feats), 1.1)
+
+
 def test_minutes_model_applies_after_research_and_statuses_still_count(tmp_path, monkeypatch):
     from dfs.projections import nba_minutes as nm
+    from dfs.projections import nba_rate as nr
     monkeypatch.setattr(nm.MinutesModel, "load", classmethod(lambda cls, folder=None, tier="main": _StubModel()))
+    monkeypatch.setattr(nr.RateModel, "load", classmethod(lambda cls, folder=None: _StubRate()))
     c = _contest(tmp_path)
     prov = NBAProvider(box=_box()[0])
     ctx = prov.prepare(c, now=TIP)
@@ -235,12 +246,36 @@ def test_minutes_model_applies_after_research_and_statuses_still_count(tmp_path,
     d = _dossier(c, white, ("questionable", "high", "2026-10-23T21:00:00Z", "White questionable"))
     statused, _ = agents.apply_status(c, d, ctx.baseline)
     out, notes = prov.after_research(c, statused)
-    assert any("minutes model applied" in n for n in notes)
+    assert any("minutes model applied" in n for n in notes) and any("rate model applied" in n for n in notes)
     rate = ctx.baseline[brunson].components["rate"]
-    assert out[brunson].mean == pytest.approx(0.9 * 30.0 * rate, abs=0.01)  # no news: the model's numbers
+    assert out[brunson].mean == pytest.approx(0.9 * 30.0 * rate * 1.1, abs=0.01)  # no news: the models' numbers
     assert out[white].p_zero == pytest.approx(1 - 0.9 * 0.7, abs=1e-3)  # questionable keeps its 30% on top
     assert out[hart].p_zero == pytest.approx(1 - 0.9 * 0.4, abs=1e-3)  # absent last game, no news: 60% stays
-    assert out[brunson].components["minutes_model"] == 30.0
+    assert out[white].mean == pytest.approx(0.9 * 0.7 * 30.0 * ctx.baseline[white].components["rate"] * 1.1, abs=0.01)
+    assert out[brunson].components["minutes_model"] == 30.0 and out[brunson].components["rate_model"] == 1.1
+
+
+def test_without_rate_files_or_if_it_fails_the_minutes_model_result_stands(tmp_path, monkeypatch):
+    from dfs.projections import nba_minutes as nm
+    from dfs.projections import nba_rate as nr
+    monkeypatch.setattr(nm.MinutesModel, "load", classmethod(lambda cls, folder=None, tier="main": _StubModel()))
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_box()[0], minutes_dir=tmp_path / "no_rate_files_here")
+    ctx = prov.prepare(c, now=TIP)
+    brunson = next(k for k, p in c.players.items() if p.name == "Jalen Brunson")
+    rate = ctx.baseline[brunson].components["rate"]
+    out, notes = prov.after_research(c, ctx.baseline)
+    assert any("minutes model applied" in n for n in notes) and any("rate model not applied" in n for n in notes)
+    assert out[brunson].mean == pytest.approx(0.9 * 30.0 * rate, abs=0.01)
+    assert all(pr.components.get("rate_model") == 1.0 for pr in out.values() if "minutes_model" in pr.components)
+
+    class Broken:
+        def multiplier(self, feats):
+            raise RuntimeError("boom")
+    monkeypatch.setattr(nr.RateModel, "load", classmethod(lambda cls, folder=None: Broken()))
+    out2, notes2 = prov.after_research(c, ctx.baseline)
+    assert any("rate model not applied (boom)" in n for n in notes2)
+    assert {k: v.mean for k, v in out2.items()} == {k: v.mean for k, v in out.items()}
 
 
 def test_without_saved_model_files_the_baseline_stands(tmp_path):
@@ -263,6 +298,41 @@ def test_shipped_minutes_model_loads_and_predicts_on_live_features(tmp_path):
     out, notes = prov.after_research(c, ctx.baseline)
     vals = [pr.components.get("minutes_model") for pr in out.values()]
     assert any("minutes model applied" in n for n in notes) and all(v is not None and 0 <= v <= 48 for v in vals)
+
+
+def test_shipped_rate_model_loads_and_predicts_bounded_multipliers_on_live_features(tmp_path):
+    from dfs.projections import nba_minutes as nm
+    from dfs.projections import nba_rate as nr
+    if nr.RateModel.load() is None or nm.MinutesModel.load() is None:
+        pytest.skip("no trained rate / minutes model in data/learned (scripts/fit_nba_minutes.py)")
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_box()[0])
+    ctx = prov.prepare(c, now=TIP)
+    out, notes = prov.after_research(c, ctx.baseline)
+    vals = np.array([pr.components.get("rate_model", np.nan) for pr in out.values() if "minutes_model" in pr.components])
+    assert any("rate model applied" in n for n in notes) and len(vals) > 20 and np.isfinite(vals).all()
+    assert ((vals >= np.exp(-0.15) - 1e-4) & (vals <= np.exp(0.15) + 1e-4)).all()
+
+
+def test_rate_features_never_see_later_games():
+    """Tonight's rate features are the same whether or not players (and the opponent) play after the cutoff."""
+    from dfs.projections import nba_rate as nr
+    box, ids = _box(include_tonight=True)  # a game at the cutoff itself must not count either
+    later = nba.normalize(pd.DataFrame(
+        [_row(ids[n], n, "NY", "BOS", "2026-10-25T23:00:00Z", 2027, 40, 60, reb=15, ast=12, gid=4242)
+         for n in ROSTER["NYK"][:5]]
+        + [_row(ids[n], n, "BOS", "NY", "2026-10-25T23:00:00Z", 2027, 40, 5, gid=4242) for n in ROSTER["BOS"][:5]]))
+    names = ROSTER["NYK"] + ROSTER["BOS"][:6]
+    slate = pd.DataFrame({"slate": "live", "season": 2027, "athlete_id": [ids[n] for n in names],
+                          "team": ["NY"] * 8 + ["BOS"] * 6, "opp": ["BOS"] * 8 + ["NY"] * 6, "pos": "PG,SG",
+                          "minutes": 28.0, "rate": 1.0, "rest_days": 2.0, "home": 1.0, "b2b": 0.0, "n_cur": 1.0,
+                          "n_prev": 30.0, "moved": 0.0, "vacated_min": 0.0})
+    cut = {"live": pd.Timestamp(TIP)}
+    a = nr.build_rate_features(slate, box, cutoffs=cut)
+    b = nr.build_rate_features(slate, pd.concat([box, later], ignore_index=True), cutoffs=cut)
+    pd.testing.assert_frame_equal(a[nr.FEATS], b[nr.FEATS])
+    # the opener counts; Hart (not in it, plays later) gets zeros like a player who never plays for the team
+    assert a["lr_3"].notna().all() and a["own_dk_share"].notna().all() and a["wowy_max"].notna().all()
 
 
 def test_minutes_features_never_see_later_games():

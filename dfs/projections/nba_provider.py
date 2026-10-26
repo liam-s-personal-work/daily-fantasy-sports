@@ -238,32 +238,34 @@ class NBAProvider:
                        starters: dict[str, set[str]] | None = None) -> tuple[dict[str, Projection], list[str]]:
         """Called once tonight's statuses are applied: team minutes are reconciled, then the learned minutes
         model (``dfs.projections.nba_minutes``, if its files are in data/learned/) re-estimates each matched
-        player's chance of playing and minutes from tonight's roster. Research statuses still apply on top."""
+        player's chance of playing and minutes from tonight's roster, and the learned rate model
+        (``dfs.projections.nba_rate``) scales his points per minute. Research statuses still apply on top."""
         out, factors = reconcile_minutes(contest, baseline)
         notes = [f"{t}: regulars' minutes x{f} (players returning from injury share the 242)" for t, f in sorted(factors.items())]
         try:
-            out, n = self._apply_minutes_model(contest, out, baseline, starters or {})
+            out, n, rate_note = self._apply_minutes_model(contest, out, baseline, starters or {})
             if n:
                 notes.append(f"minutes model applied to {n} players"
                              + (f" (confirmed starters for {len(starters)} teams)" if starters else ""))
+                notes.append(rate_note)
         except Exception as e:  # the learned layer never blocks a run: the baseline stands
             notes.append(f"minutes model not applied ({e})")
         return out, notes
 
     def _apply_minutes_model(self, contest: Contest, out: dict[str, Projection], statused: dict[str, Projection],
-                             starters: dict[str, set[str]]) -> tuple[dict[str, Projection], int]:
+                             starters: dict[str, set[str]]) -> tuple[dict[str, Projection], int, str]:
         live = getattr(self, "_live", None)
         if live is None:
-            return out, 0
+            return out, 0, ""
         from dfs.projections import nba_minutes as nm
 
         model = nm.MinutesModel.load(self.minutes_dir)
         if model is None:
-            return out, 0
+            return out, 0, ""
         info, table, lastg = live["info"], live["table"], live["lastg"]
         keys = [k for k in out if k in info]
         if not keys:
-            return out, 0
+            return out, 0, ""
         active = {info[k]["athlete_id"] for k in keys}
         vac: dict[str, float] = {}
         for k in keys:
@@ -292,6 +294,7 @@ class NBAProvider:
                 pp_lc, m_lc = lc.predict(feats[sel])
                 p_play, mins = p_play.copy(), mins.copy()
                 p_play[sel], mins[sel] = pp_lc, m_lc
+        mult, rate_note = self._rate_multiplier(pd.DataFrame(rows), live["cutoff"])
         res = dict(out)
         for (k, pp, m) in zip(feats["key"], p_play, mins):
             f, pr = info[k], out[k]
@@ -303,15 +306,32 @@ class NBAProvider:
             if f["benched"] and p_status <= self.params.p_zero_benched:
                 p_status = 0.0  # a healthy scratch's risk is the model's (it sees he was benched)
             play = float(pp) * (1.0 - p_status)
-            cond_new = float(m) * f["rate"]
+            r_mult = mult.get(k, 1.0)  # a player the rate layer could not score keeps the engine rate
+            cond_new = float(m) * f["rate"] * r_mult
             cond_old = pr.mean / (1 - pr.p_zero) if pr.p_zero < 1 else cond_new
             g = cond_new / cond_old if cond_old > 0 else 1.0
             res[k] = pr.model_copy(update={
                 "mean": round(play * cond_new, 3), "p_zero": round(1.0 - play, 3),
                 "p10": round(pr.p10 * g, 2), "p50": round(pr.p50 * g, 2), "p90": round(pr.p90 * g, 2),
                 "components": dict(pr.components, minutes_model=round(float(m), 2), p_play_model=round(float(pp), 3),
-                                   p_status=round(p_status, 3))})
-        return res, len(keys)
+                                   p_status=round(p_status, 3), rate_model=round(r_mult, 4))})
+        return res, len(keys), rate_note
+
+    def _rate_multiplier(self, rows: pd.DataFrame, cutoff) -> tuple[dict[str, float], str]:
+        """Player key -> the learned rate model's multiplier on his engine points per minute (1.0 for everyone when
+        its files are missing or it fails: the minutes model result stands), and a note saying which."""
+        from dfs.projections import nba_rate as nr
+
+        try:
+            model = nr.RateModel.load(self.minutes_dir)
+            if model is None:
+                return dict.fromkeys(rows["key"], 1.0), f"rate model not applied (no files in {self.minutes_dir})"
+            feats = nr.build_rate_features(rows, self.box, cutoffs={"live": cutoff})
+            mult = dict(zip(feats["key"], (float(x) for x in model.multiplier(feats))))
+            return mult, (f"rate model applied to {len(mult)} players (points per minute x{min(mult.values()):.2f}"
+                          f" to x{max(mult.values()):.2f})")
+        except Exception as e:  # the learned layer never blocks a run: the minutes model result stands
+            return dict.fromkeys(rows["key"], 1.0), f"rate model not applied ({e})"
 
     def __init__(self, season: int | None = None, *, box: pd.DataFrame | None = None, params: NBAParams | None = None,
                  max_age_hours: float | None = None, minutes_dir=None):
@@ -321,7 +341,7 @@ class NBAProvider:
         self.box = box
         self.params = params or NBAParams()
         self.max_age_hours = max_age_hours
-        self.minutes_dir = minutes_dir or LEARNED  # learned minutes model (None files: baseline only)
+        self.minutes_dir = minutes_dir or LEARNED  # learned minutes and rate models (no files: baseline only)
 
     def prepare(self, contest: Contest, now: datetime | None = None) -> SlateContext:
         if contest.rules.sport != "nba":

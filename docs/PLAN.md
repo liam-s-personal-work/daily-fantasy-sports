@@ -405,6 +405,12 @@ These projections were committed before kickoff, so they can be graded honestly 
   | + confirmed starters at last call | 71.1% |
 
 - **Exact optimum:** 0 nights, for every method, even with each player's exact minutes known.
+- **Second round, aimed at 85%:**
+  - a per-minute rate model adds +0.55 (+0.73 at last call), not significant;
+  - more data and new minutes features, and rules learned from real optimal lineups, didn't help;
+  - several diverse entries do help: the best of 10 averages 77.4%, and the best of about 128 averages
+    82.0%;
+  - no method averages 85%.
 - **NFL:** data fixes moved the engine from 53.3% to 54.7% (+1.4 [+0.2, +2.7], 95 weeks). Learned
   corrections didn't help.
 - **College:** a learned correction scored +3.0 [−3.7, +9.9] on 7 test slates, with single-seed copies of it

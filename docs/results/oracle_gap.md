@@ -92,8 +92,12 @@ The learned minutes model:
   | Site's average | 191.0 | 49.9% |
   | Engine | 229.5 | 59.9% |
   | With the minutes model | 247.5 | 64.6% |
+  | With the minutes and rate models (second round) | 217.8 | 56.9% |
 
-  One night is anecdote, not evidence, but it points the same way.
+  One night is anecdote, not evidence. The minutes model pointed the right way here. The rate model,
+  added in the second round, pointed the wrong way: it swapped Dyson Daniels (44.2) and Jalen Suggs
+  (33.5) for Ausar Thompson, Kyshawn George and Jonathan Kuminga. A single night's difference has a
+  standard deviation of about 7 points, so this says little against the 169-night holdout (+0.55).
 - `python3 scripts/fit_nba_minutes.py --holdout` reproduces the two shipped rows above from scratch.
 - **Expect about +3.7, not +4.1.** Five other random seeds of the same main model score +3.64 to +3.73
   (69.9–70.0% of optimal), so the shipped fit's +4.12 is a lucky draw of about 0.4. Averaging five seeds
@@ -143,6 +147,76 @@ Nothing beats max expected points, so that is now the default objective (`--obje
 points and scored 290.8 on average; the engine's, 276.5 and 273.6. Picking the top of a noisy list
 usually overstates it ("winner's curse"), but here that costs 1–3 points, so shrinking projections has
 little to recover. The site's own average, by contrast, projected 283.0 and scored 266.0.
+
+## Pushing for 85% (2026-10-26, second round)
+
+The target was 85% of the optimum. The ceilings above already say one lineup can't get there: exact
+minutes give 82.8%. Four more experiments ran in parallel, each audited by a separate agent that tried to
+break it. All four audits came back clean.
+
+- **The protocol was stricter this round.** Training used 2024-25 only. Every setting was chosen on the
+  68 nights before 2026-01-01. The test was the remaining 101 nights (2026-01-01 on), each column scored
+  once.
+- **On those nights:** engine 65.9%, shipped minutes model 70.6%, last call 71.1%.
+
+| Experiment | Test result | Shipped |
+|---|---|:---:|
+| Minutes model v2: 2023-24 added as training data, 23 new features (minutes ramp after an absence, volatility, fatigue, foul rate, blowout risk, pace, rotation shape) | −0.08 [−0.98, +0.78] vs the same model refit with the same seeds. Minutes error −0.5%; lineups didn't move. | no |
+| Per-minute rate model on top of the minutes model (WOWY with absent teammates, usage redistribution, opponent per-minute defence by position, pace, role, recency), heavily regularised | +1.76 [+0.66, +2.78] vs the same minutes with the engine's rate. +0.80 [−0.26, +1.84] on the shipped minutes. | yes (small) |
+| Learn from real optimal lineups: P(in the optimum), upside quantiles, value thresholds | Best rule: the learned 75th percentile, +0.85 [−0.55, +2.21]. P(in the optimum) alone: −0.99. Value thresholds: −8 to −17. | no |
+| Several entries (best of N) | See below | yes |
+
+**The rate model on the shipped code path.** `scripts/fit_nba_minutes.py --holdout` trains on 2024-25 and
+scores all 169 nights of 2025-26 and 2026-27:
+
+| Column | % of optimal | vs minutes model |
+|---|---:|---:|
+| Minutes model | 70.38% | |
+| Minutes model × rate model | 70.93% | +0.55 [−0.30, +1.38] |
+| Last call | 71.14% | +0.76 [−0.23, +1.80] |
+| Last call × rate model | 71.87% | +1.49 [+0.37, +2.63] |
+
+- **Every comparison points the same way.** The model also scales a player's points per minute by at
+  most ±16%, so it ships. But on its own it is not significant over the shipped minutes model: +0.55
+  on the main tier and +0.73 [−0.11, +1.56] on last call.
+- **Its larger +1.76 was measured against a typical-seed minutes model.** The shipped fit is the lucky one.
+- **The port reproduces the experiment exactly:** all 60 feature columns on 63,354 rows, and the same
+  lineup on all 101 test nights.
+- **It also fixed a look-ahead in the experiment.** Whether a player appears in his team's season table
+  told the model whether he plays for the team later. It affected 130 rows, none of which played, and
+  changes no test lineup.
+- **Live:** `dfs/projections/nba_rate.py`, `data/learned/nba_rate_*`. If its files are missing or it
+  fails, the minutes model's numbers stand and the run log says so.
+
+**Why the optimum can't be learned.** In 2024-25 the players in each night's optimal lineup were the
+slate's 30th-best projection on the median (middle half: 11th to 62nd). They scored 52 points against 32
+projected. The optimum is made of players who beat their projection by about 20 points each, and before
+tip that looks like noise.
+
+**Several entries.** The night's score here is your best entry ÷ the optimum. DK's mini-MAX allows 150
+entries at $0.50.
+
+| Entries | Cost | Best entry, % of optimal | Nights ≥ 85% |
+|---:|---:|---:|---:|
+| 1 | $0.50 | 70.6% | 5% |
+| 3 | $1.50 | 74.4% | |
+| 5 | $2.50 | 75.7% | |
+| 10 | $5 | 77.4% (+6.8 [+5.8, +7.7]) | 12% |
+| 20 | $10 | 79.1% | 13% |
+| 50 | $25 | 80.5% | 17% |
+| ~128 | $64 | 82.0% | 26% |
+
+- **Method for 1 to 10 entries:** the best lineup, then each next-best lineup that differs from every
+  earlier one by at least 4 players (4 chosen from 1-4 on validation). That beats the plain top 10 by
+  1.4 points [0.7, 2.1].
+- **Simulation methods** (lineups that are optimal in simulated nights, or chosen to maximise the
+  expected best entry) did no better at 1 to 10 entries.
+- **Rows for 20 or more entries** use the simulation method, since the plain method was not run that far.
+- **The ceiling.** The curve gains less than half a point per doubling past 50 entries. No number of
+  entries averages 85%, and none hit the exact optimum on any night.
+- **Shipped.** With `--objective points`, an entries file with several open entries for one contest now
+  gets this portfolio instead of near-copies of one lineup (`dfs/strategy.py`, `PORTFOLIO_MIN_DIFF`).
+  A single entry is unchanged.
 
 ## NFL
 
@@ -210,6 +284,10 @@ are as above.
 5. **College play-by-play gap fill.**
 6. **The harness itself** (`dfs/oracle.py`, `scripts/oracle/`), so every future change is scored the
    same way. Experiment scripts are kept in `scripts/oracle/exp_*.py`.
+7. **NBA per-minute rate model** (`dfs/projections/nba_rate.py`): +0.55 on the main tier and +0.73 at
+   last call, not significant on its own (second round, above).
+8. **Several entries get a diverse portfolio** under the points objective: the best of 10 averages
+   77.4% of the optimum, against 70.6% for one entry (second round, above).
 
 **What a lineup is now, in plain numbers.** On a typical held-out NBA night it scores about 71% of the
 best lineup anyone could have entered. Before this work it scored 66%, and the site's average scored 64%.

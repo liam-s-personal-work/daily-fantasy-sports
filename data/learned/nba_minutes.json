@@ -7,7 +7,7 @@
  "nights": 328,
  "rows": 63296,
  "last_night": "2026-10-25",
- "created": "2026-10-26T15:29:48+00:00",
+ "created": "2026-10-26T17:58:41+00:00",
  "source": "scripts/fit_nba_minutes.py (features: dfs.projections.nba_minutes.build_features)",
  "features": {
   "main": [

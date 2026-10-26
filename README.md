@@ -59,9 +59,14 @@ else, or want to be safe after the first kickoff, download the entries file agai
 `dfs lastcall runs/<id> --entries DKEntries.csv`. Each entry then starts from what the site holds, and the
 site's `(LOCKED)` cells stay where they are.
 
-NBA projections add a learned minutes model (`data/learned/nba_minutes_*`, trained by
-`scripts/fit_nba_minutes.py`) to the stats baseline. At last call, teams whose starting five is confirmed
-switch to a starter-aware version of it.
+NBA projections add a learned minutes model and a learned per-minute rate model (`data/learned/nba_*`,
+trained by `scripts/fit_nba_minutes.py`) to the stats baseline. At last call, teams whose starting five is
+confirmed switch to a starter-aware version of the minutes model.
+
+An entries file with several open entries in one contest gets the best lineup, then each next-best lineup
+that differs from all earlier ones by at least 4 players. Only your best entry counts toward your best
+finish, and on held-out NBA nights the best of 10 such entries averaged 77% of the best lineup possible,
+against 71% for one entry.
 
 Keep your contest files wherever you like. In the repo folder, `DK*.csv`, `FD*.csv`, `FanDuel*.csv` and
 `*contest-standings*.csv` are git-ignored, so they are never committed by accident.
