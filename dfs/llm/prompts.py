@@ -24,7 +24,8 @@ Rules:
 - Set status on every fact ("none" when it is not about availability); a past game's absence is not
   this game's status.
 - The structured data block below is already known (from {known_source}); do not re-search it. Focus on what
-  is newer than it or missing from it."""
+  is newer than it or missing from it. A line there that ends "check tonight's report" is the exception: search
+  that player by name."""
 
 # Per-sport focus and checklist for the research desk (football is the default).
 RESEARCH_FOCUS = {
@@ -44,7 +45,9 @@ RESEARCH_FOCUS = {
             "  1. each team's latest injury report for tonight and any players ruled out or listed questionable;\n"
             "  2. projected or confirmed starting lineups and who replaces any absent starter;\n"
             "  3. minutes restrictions, players returning from injury, rest on a back-to-back;\n"
-            "  4. anything else that changes minutes or usage (trades, suspensions, illness, a coach's comments)."),
+            "  4. anything else that changes minutes or usage (trades, suspensions, illness, a coach's comments);\n"
+            "  5. every player the known data says to check (he left his last game early, often hurt): search his\n"
+            "     name for the injury and tonight's status, and report it even when he is not on the injury report."),
 }
 
 RESEARCH_PROMPT = """Game: {game} ({kickoff})

@@ -14,7 +14,9 @@ as on a site with the injury report known. Columns:
   stand-in for the site's own average);
 - features for learned models (all pre-game): minutes, rate, n_cur, n_prev, moved, last_minutes,
   benched, absent_last, home, rest_days, b2b, vacated_min (projected minutes of teammates absent
-  tonight), opp_allowed (opponent's DK points allowed per game vs league, season to date).
+  tonight), opp_allowed (opponent's DK points allowed per game vs league, season to date);
+  left_early (started the team's last game, under half his usual minutes: ``nba_provider.left_early``;
+  not a model feature, it only marks him uncertain in the team-minutes rule, as live).
 
     python scripts/oracle/nba_slates.py data/cache/oracle/nba_slates.parquet
 """
@@ -30,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 from dfs.data import nba
-from dfs.projections.nba_provider import NBAParams, p_zero_after_playing, player_table, team_last_games
+from dfs.projections.nba_provider import NBAParams, left_early, p_zero_after_playing, player_table, team_last_games
 
 sys.path.insert(0, str(Path(__file__).parent))
 from nba_salary import dk_features  # noqa: E402
@@ -79,6 +81,7 @@ def build_night(date: str) -> pd.DataFrame:
     season = int(night["season"].iloc[0])
     table = player_table(box, cutoff, season, P)
     lastg = team_last_games(box, cutoff, season)
+    early = left_early(box, cutoff, season, P)
     feats = dk_features(box, cutoff, season)
     allowed = opp_allowed(box, cutoff, season)
     league = table.attrs["league_rate"]
@@ -97,6 +100,7 @@ def build_night(date: str) -> pd.DataFrame:
             last_played = tg is not None and aid in tg[1]
             benched = tg is not None and aid in tg[3]
             absent_last = tg is not None and not last_played and not benched
+            left = last_played and aid in early.get(team, {})  # started it, left early (live: p_zero_left_early)
             if aid in table.index:
                 t = table.loc[aid]
                 minutes, rate, cond = float(t["minutes"]), float(t["rate"]), float(t["mean"])
@@ -111,7 +115,7 @@ def build_night(date: str) -> pd.DataFrame:
                     cond *= P.benched_minutes / minutes
                     minutes = P.benched_minutes
             elif last_played:
-                pz = p_zero_after_playing(last_min, P)
+                pz = p_zero_after_playing(last_min, P)  # also after leaving early: active tonight, as live's feature
             else:
                 pz = 0.0  # absent last game but active tonight: research reports him active
             rest = (cutoff - team_dates.get(team, cutoff - pd.Timedelta(days=3))).total_seconds() / 86400 if team in team_dates else 3.0
@@ -122,22 +126,25 @@ def build_night(date: str) -> pd.DataFrame:
                 "actual": 0.0 if (r["did_not_play"] or r["minutes"] <= 0) else float(nba.dk_points(pd.DataFrame([r])).iloc[0]),
                 "minutes_actual": float(r["minutes"]), "minutes": minutes, "rate": rate, "engine_cond": cond, "p_zero": pz,
                 "n_cur": n_cur, "n_prev": n_prev, "moved": moved, "last_minutes": last_min, "benched": float(benched),
-                "absent_last": float(absent_last), "home": float(team == home), "rest_days": rest, "b2b": float(rest < 1.5),
+                "absent_last": float(absent_last), "left_early": float(left), "home": float(team == home),
+                "rest_days": rest, "b2b": float(rest < 1.5),
                 "opp_allowed": allowed.get(r["opponent_team_abbreviation"], 1.0),
                 "ppg": f["ppg"] if f is not None else np.nan, "l5": f["l5"] if f is not None else np.nan,
                 "ppg_prev": f["ppg_prev"] if f is not None else np.nan,
                 "ppg_blend": f["ppg_blend"] if f is not None else np.nan, "l5_blend": f["l5_blend"] if f is not None else np.nan,
             })
     d = pd.DataFrame(rows)
-    # team minutes: players returning to the lineup share the 242 with the regulars (engine's reconcile rule)
+    # team minutes: players returning to the lineup share the 242 with the regulars (engine's reconcile rule;
+    # a starter who left his last game early is uncertain there too)
     out = []
     for team, g in d.groupby("team"):
         exp = g["minutes"] * (1 - g["p_zero"])
-        reg = exp[(g["benched"] == 0) & (g["absent_last"] == 0)].sum()
-        unc = exp[(g["benched"] == 0) & (g["absent_last"] == 1)].sum()
+        uncertain = (g["absent_last"] == 1) | (g["left_early"] == 1)
+        reg = exp[(g["benched"] == 0) & ~uncertain].sum()
+        unc = exp[(g["benched"] == 0) & uncertain].sum()
         f = max(P_FLOOR, min(1.0, (242 - unc) / reg)) if reg > 0 and reg + unc > 242 else 1.0
         g = g.copy()
-        regs = (g["benched"] == 0) & (g["absent_last"] == 0)
+        regs = (g["benched"] == 0) & ~uncertain
         g.loc[regs, "minutes"] *= f
         g.loc[regs, "engine_cond"] *= f
         out.append(g)

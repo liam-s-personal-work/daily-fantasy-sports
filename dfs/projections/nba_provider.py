@@ -15,9 +15,10 @@ Model (tuned on the first three weeks of 2025-26 with 2024-25 as the prior seaso
 - Spread: ``sd = sd_a + sd_b * mean`` given he plays, right-skewed quantiles.
 - Availability: missing from his team's last box score (injured or inactive) gives
   ``p_zero_missed``. In uniform but unused (a coach's decision) gives ``p_zero_benched``, at most
-  ``benched_minutes``, and a "probable" listing cannot lower it. Otherwise a small chance by
-  last-game minutes. Tonight's injury report
-  comes from research: cited facts rule players out or set p_zero (``agents.apply_status``).
+  ``benched_minutes``, and a "probable" listing cannot lower it. Started it but left early (under
+  half his usual minutes, usually hurt) gives ``p_zero_left_early`` by how early, and a fact that
+  tells research to check him by name. Otherwise a small chance by last-game minutes. Tonight's
+  injury report comes from research: cited facts rule players out or set p_zero (``agents.apply_status``).
 
 Players with no NBA game on record get about 10 minutes at 90% of the league rate, and are
 listed in ``notes``.
@@ -65,6 +66,12 @@ class NBAParams:
     p_zero_missed: float = 0.6  # missing from the team's last box score (2025-26: 0.58-0.66 miss the next)
     p_zero_benched: float = 0.55  # in uniform but did not play (coach's decision): 0.46-0.54 sit again
     benched_minutes: float = 10.0  # a healthy scratch who does get in plays spot minutes
+    # started the team's last game but left early: did not play the next, by minutes as a share of his usual (the
+    # last cap is the rule). 2025-27: 286 starters, 0.60 [0.55, 0.66] (0.49 absent from its box score, like
+    # 0.48 after one absence in 2025-27); <30% 0.81 (n 98), 30-40% 0.63 (63), 40-50% 0.43 (125); starters at
+    # normal minutes 0.07. Blowouts are a fifth of the flags and still 0.54; bench players are left out (0.23-0.31)
+    p_zero_left_early: tuple[tuple[float, float], ...] = ((0.3, 0.81), (0.4, 0.63), (0.5, 0.43))
+    left_early_usual: float = 20.0  # minutes per game played in the team's earlier games (last season's under 2)
     # did not play next game, by minutes in the last game (2025-26: <10, 10-20, 20-30, 30+)
     p_zero_by_minutes: tuple[tuple[float, float], ...] = ((10.0, 0.37), (20.0, 0.095), (30.0, 0.04), (999.0, 0.02))
 
@@ -146,6 +153,39 @@ def team_last_games(box: pd.DataFrame, cutoff: datetime,
         benched = last[last["did_not_play"] | (last["minutes"] <= 0)]
         out[team] = (last["start"].iloc[0], set(played["athlete_id"]),
                      set(played[played["starter"].fillna(False).astype(bool)]["athlete_id"]), set(benched["athlete_id"]))
+    return out
+
+
+def p_zero_after_leaving(minutes: float, usual: float, params: NBAParams) -> float:
+    """Chance a starter who left his last game early misses the next (0 when he played enough)."""
+    for cap, pz in params.p_zero_left_early:
+        if minutes < cap * usual:
+            return pz
+    return 0.0
+
+
+def left_early(box: pd.DataFrame, cutoff: datetime, season: int,
+               params: NBAParams = NBAParams()) -> dict[str, dict[int, tuple[float, float]]]:
+    """ESPN team code -> {athlete id: (minutes, usual minutes)} for starters of the team's last game this season who
+    played under the last cap of ``p_zero_left_early`` (half) of their usual minutes: most left hurt. Usual is his
+    minutes per game played in the team's earlier games this season, or last season's with fewer than 2; it must be
+    at least ``left_early_usual``. Keyed by team: an All-Star exhibition team's short games never flag anyone."""
+    h = nbadata.before(box, cutoff)
+    h = h[~h["did_not_play"] & (h["minutes"] > 0)].sort_values("start")
+    cur = h[h["season"] == season].copy()
+    if cur.empty:
+        return {}
+    g = cur.groupby(["athlete_id", "team_abbreviation"])["minutes"]
+    cur["n_before"], cur["sum_before"] = g.cumcount(), g.cumsum() - cur["minutes"]
+    last_gid = cur.groupby("team_abbreviation")["game_id"].last()  # the team's last game (as in team_last_games)
+    last = cur[(cur["game_id"] == cur["team_abbreviation"].map(last_gid)) & cur["starter"].fillna(False).astype(bool)]
+    prev = h[h["season"] == season - 1].groupby("athlete_id")["minutes"].mean()
+    usual = np.where(last["n_before"] >= 2, last["sum_before"] / last["n_before"].clip(lower=1),
+                     last["athlete_id"].map(prev))
+    hit = (usual >= params.left_early_usual) & (last["minutes"] < params.p_zero_left_early[-1][0] * usual)
+    out: dict[str, dict[int, tuple[float, float]]] = {}
+    for team, a, m, u in zip(last["team_abbreviation"][hit], last["athlete_id"][hit], last["minutes"][hit], usual[hit]):
+        out.setdefault(team, {})[int(a)] = (float(m), float(u))
     return out
 
 
@@ -300,9 +340,10 @@ class NBAProvider:
             f, pr = info[k], out[k]
             orig = live["p_zero"][k]
             # research statuses still count (the model never saw tonight's injury report): a status that moved
-            # p_zero sets the injury risk; a player missing from the last box score with no news keeps it
+            # p_zero sets the injury risk; a player missing from the last box score, or who left it early, with no
+            # news keeps it
             p_status = statused[k].p_zero if abs(statused[k].p_zero - orig) > 1e-9 else (
-                self.params.p_zero_missed if f["absent_last"] else 0.0)
+                self.params.p_zero_missed if f["absent_last"] else f["p_zero_left_early"])
             if f["benched"] and p_status <= self.params.p_zero_benched:
                 p_status = 0.0  # a healthy scratch's risk is the model's (it sees he was benched)
             play = float(pp) * (1.0 - p_status)
@@ -365,6 +406,7 @@ class NBAProvider:
         table = player_table(box, cutoff, season, self.params)
         ids, missing = match_players(contest, table)
         lastg = team_last_games(box, cutoff, season)
+        early = left_early(box, cutoff, season, self.params)
         notes = [f"NBA baseline: ESPN box scores {season - 2}-{season} before {cutoff:%Y-%m-%d %H:%M} UTC; "
                  f"{len(ids)} of {len(contest.players)} players matched"]
         if missing:
@@ -379,6 +421,7 @@ class NBAProvider:
         team_last = hist.groupby("team_abbreviation")["start"].max()
         info: dict[str, dict] = {}
         known_lines: dict[str, list[str]] = {}
+        check_lines: dict[str, list[str]] = {}  # players who left their last game early
         usage_lines: dict[str, list[str]] = {}
         for k, p in contest.players.items():
             if status_out(p.injury_status):
@@ -404,10 +447,13 @@ class NBAProvider:
             r = table.loc[aid]
             missed = tg is not None and aid not in tg[1]  # did not play the team's last game
             benched = missed and aid in tg[3]  # ... in uniform: a coach's decision, not an injury
+            left = None if missed else early.get(team, {}).get(int(aid))  # started it, left early: (minutes, usual)
+            pz_left = p_zero_after_leaving(*left, self.params) if left is not None else 0.0
             minutes, mean = float(r["minutes"]), float(r["mean"])
             floor = 0.0
             if not missed:
-                pz = max(pz, p_zero_after_playing(float(r["last_minutes"]), self.params))
+                # a left-early chance is no floor: a cited status tonight replaces it (like an absence)
+                pz = max(pz, p_zero_after_playing(float(r["last_minutes"]), self.params), pz_left)
             elif benched:
                 floor = self.params.p_zero_benched  # "probable" says available, not in the rotation
                 pz = max(pz, floor)
@@ -416,14 +462,20 @@ class NBAProvider:
                     minutes = self.params.benched_minutes
             else:
                 pz = max(pz, self.params.p_zero_missed)
-            if missed:
+            if missed or left is not None:
                 when = f"{tg[0].tz_convert('America/New_York'):%b %d}"
-                text = (f"{p.name} was in uniform but did not play (coach's decision) in {p.team}'s last game ({when})"
-                        if benched else f"{p.name} was not in {p.team}'s last box score ({when}): injured or inactive")
+                if benched:
+                    text = f"{p.name} was in uniform but did not play (coach's decision) in {p.team}'s last game ({when})"
+                elif missed:
+                    text = f"{p.name} was not in {p.team}'s last box score ({when}): injured or inactive"
+                else:
+                    text = (f"{p.name} played only {left[0]:.0f} minutes in {p.team}'s last game ({when}) after "
+                            f"averaging {left[1]:.0f}: possibly injured; check tonight's report")
                 facts.setdefault(g, []).append(Fact(subject=p.name, team=p.team, kind="status", text=text, status="none",
                                                     source_url=SOURCE_URL, confidence="medium",
                                                     as_of=f"{tg[0]:%Y-%m-%d}"))
-                known_lines.setdefault(g, []).append(text)
+                # research searches the flagged players by name (prompts.RESEARCH_FOCUS): they go first
+                (check_lines if left is not None else known_lines).setdefault(g, []).append(text)
             elif tg is not None and aid in tg[2]:
                 known_lines.setdefault(g, []).append(f"{p.name} started {p.team}'s last game")
             rest = ((cutoff - team_last[team]).total_seconds() / 86400) if team in team_last.index else 3.0
@@ -432,9 +484,11 @@ class NBAProvider:
                        "pos": {"G": "PG,SG", "F": "PF,SF", "C": "C"}.get(str(r["group"]), "PF,SF"),
                        "minutes": minutes, "rate": float(r["rate"]), "last_minutes": float(r["last_minutes"]),
                        "benched": float(benched), "absent_last": float(missed and not benched),
-                       "n_cur": float(r["n_cur"]), "n_prev": float(r["n_prev"]), "moved": float(bool(r["moved"])),
+                       "p_zero_left_early": pz_left, "n_cur": float(r["n_cur"]), "n_prev": float(r["n_prev"]),
+                       "moved": float(bool(r["moved"])),
                        "rest_days": rest, "b2b": float(rest < 1.5), "home": float(p.team == home),
-                       # the model was trained on players known active: their own p_zero by last game only
+                       # the model was trained on players known active: their own p_zero by last game only (a
+                       # starter who left early keeps his by minutes, as in training: scripts/oracle/nba_slates.py)
                        "p_zero_feature": (self.params.p_zero_benched if benched else 0.0 if missed
                                           else p_zero_after_playing(float(r["last_minutes"]), self.params))}
             sd = max(self.params.sd_a + self.params.sd_b * mean, 1.0)
@@ -443,8 +497,10 @@ class NBAProvider:
                                  p90=round(p90, 2), p_zero=round(pz, 3), source="baseline",
                                  components={"minutes": round(minutes, 2), "rate": round(float(r["rate"]), 4),
                                              "n_cur": float(r["n_cur"]), "n_prev": float(r["n_prev"]),
-                                             "moved": float(bool(r["moved"])), "uncertain": float(missed),
-                                             "benched": float(benched), "p_zero_floor": floor})
+                                             "moved": float(bool(r["moved"])),
+                                             "uncertain": float(missed or left is not None),
+                                             "benched": float(benched), "left_early": float(left is not None),
+                                             "p_zero_floor": floor})
             mins_cur = r["min_cur"] / r["n_cur"] if r["n_cur"] else None
             mins_prev = r["min_prev"] / r["n_prev"] if r["n_prev"] else None
             usage_lines.setdefault(g, []).append(
@@ -455,7 +511,8 @@ class NBAProvider:
         self._live = {"cutoff": pd.Timestamp(cutoff).tz_convert("UTC"), "season": season, "table": table,
                       "lastg": lastg, "info": info, "p_zero": {k: base[k].p_zero for k in info}}
         return SlateContext(baseline=base, ruled_out=out, structured_facts=facts,
-                            known={g: "\n".join(v) for g, v in known_lines.items()},
+                            known={g: "\n".join(check_lines.get(g, []) + known_lines.get(g, []))
+                                   for g in {**check_lines, **known_lines}},
                             usage={g: "\n".join(v) for g, v in usage_lines.items()},
                             notes=notes, data_source=f"sportsdataverse ESPN NBA box scores ({season - 2}-{season})",
                             ids={k: str(v) for k, v in ids.items()}, season=season,

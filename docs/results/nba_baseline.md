@@ -63,6 +63,14 @@ All rates below come from the 2025-26 regular season.
 | Missing from the box score (injured, inactive) | 0.58–0.66 (0.52 after one game, rising with the streak) |
 
 - **Missing from the last box score:** the provider uses `p_zero = 0.6`.
+- **Started the last game but left early** (under half his usual minutes, usual 20+; usual is his
+  minutes per game in the team's earlier games, last season's with fewer than 2): 2025-27, 286
+  starters, 0.60 [0.55, 0.66] did not play the next game (0.49 absent from its box score). By
+  share of usual: under 30% 0.81 (n 98), 30-40% 0.63 (n 63), 40-50% 0.43 (n 125). Starters at
+  normal minutes: 0.07. The provider uses these three rates (`p_zero_left_early`) unless research
+  finds a status, and the research desk is told to check the player by name. Blowouts are a fifth
+  of the flags and still 0.54; 5+ fouls 8 flags, none missed; 28% played normal minutes next game.
+  Bench players under half their minutes are not flagged (0.23-0.31, mostly coach's decisions).
 - **Tonight's statuses:** research sets these from cited facts (`agents.apply_status`):
   doubtful 0.75, questionable 0.30, probable 0.05, active 0. Out and inactive players are
   removed.

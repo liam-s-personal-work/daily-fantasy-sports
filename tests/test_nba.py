@@ -216,6 +216,86 @@ def test_a_healthy_scratch_is_not_lifted_by_a_probable_listing(tmp_path):
     assert out[hart].p_zero == p.p_zero_benched  # available is not the same as in the rotation
 
 
+def _left_early_box(minutes, starter=True):
+    """Brunson (30 minutes a game last season) plays only ``minutes`` in the opener, NYK's last game; with
+    fewer than 2 games this season his usual minutes are last season's."""
+    box, ids = _box()
+    opener = (box["athlete_display_name"] == "Jalen Brunson") & (box["season"] == 2027)
+    box.loc[opener, "minutes"] = minutes
+    box.loc[opener, "starter"] = starter
+    return box, ids
+
+
+def test_a_starter_who_left_early_is_flagged_and_research_is_told_to_check_him(tmp_path):
+    c = _contest(tmp_path)
+    ctx = NBAProvider(box=_left_early_box(8.0)[0]).prepare(c, now=TIP)
+    k = next(k for k, p in c.players.items() if p.name == "Jalen Brunson")
+    pr = ctx.baseline[k]
+    assert pr.p_zero == 0.81 and k not in ctx.ruled_out  # under 30% of his usual: above the 0.37 for under 10 minutes
+    assert pr.components["left_early"] == 1.0 and pr.components["uncertain"] == 1.0
+    assert pr.components["p_zero_floor"] == 0.0  # not a floor that survives tonight's report
+    f = next(f for fs in ctx.structured_facts.values() for f in fs if f.subject == "Jalen Brunson")
+    assert f.text == ("Jalen Brunson played only 8 minutes in NYK's last game (Oct 21) after averaging 30: "
+                      "possibly injured; check tonight's report")
+    assert f.status == "none" and not agents.says_out(f.model_copy(update={"id": "NYK@BOS.S1"}))
+    # the research desk gets him first in the known data and is told to search flagged players by name
+    g = c.players[k].game
+    task = next(t for t in agents.research_tasks(c, ctx.known, {}, now=TIP) if t.name == f"research:{g}")
+    assert ctx.known[g].splitlines()[0] == f.text and f.text in task.prompt
+    assert "check tonight's report" in task.system and "every player the known data says to check" in task.system
+    # the chance grows the earlier he left: 13 of 30 minutes is the 40-50% tier
+    assert NBAProvider(box=_left_early_box(13.0)[0]).prepare(c, now=TIP).baseline[k].p_zero == 0.43
+
+
+def test_tonight_s_report_replaces_the_left_early_flag(tmp_path, monkeypatch):
+    from dfs.projections import nba_minutes as nm
+    monkeypatch.setattr(nm.MinutesModel, "load", classmethod(lambda cls, folder=None, tier="main": _StubModel()))
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_left_early_box(8.0)[0], minutes_dir=tmp_path / "no_rate_files_here")
+    ctx = prov.prepare(c, now=TIP)
+    k = next(k for k, p in c.players.items() if p.name == "Jalen Brunson")
+    d = _dossier(c, k, ("probable", "high", "2026-10-23T21:00:00Z", "Brunson (ankle) probable tonight"))
+    statused, _ = agents.apply_status(c, d, ctx.baseline)
+    assert statused[k].p_zero == 0.05  # a cited status wins over the flag
+    out, _ = prov.after_research(c, statused)
+    assert out[k].p_zero == pytest.approx(1 - 0.9 * 0.95, abs=1e-3)
+    out, _ = prov.after_research(c, ctx.baseline)  # no news: the flag's 81% stays on top of the model
+    assert out[k].p_zero == pytest.approx(1 - 0.9 * (1 - 0.81), abs=1e-3)
+
+
+def test_normal_minutes_bench_players_and_games_at_the_cutoff_are_not_flagged(tmp_path):
+    from dfs.projections.nba_provider import left_early
+    c = _contest(tmp_path)
+    k = next(k for k, p in c.players.items() if p.name == "Jalen Brunson")
+
+    def flagged(box, now=TIP):
+        ctx = NBAProvider(box=box).prepare(c, now=now)
+        return {c.players[j].name for j, pr in ctx.baseline.items() if pr.components.get("left_early")}
+
+    assert flagged(_box()[0]) == set()  # 36 minutes in the opener: nobody
+    assert flagged(_left_early_box(18.0)[0]) == set()  # 60% of his usual 30 is not enough
+    bench, _ = _left_early_box(8.0, starter=False)
+    assert flagged(bench) == set()  # a bench player's short night is usually the coach's call
+    assert NBAProvider(box=bench).prepare(c, now=TIP).baseline[k].p_zero == 0.37  # by minutes only
+    # a 5-minute start at the cutoff itself never counts; once it has tipped before the cutoff it does
+    box, ids = _box()
+    late = nba.normalize(pd.DataFrame([_row(ids["Jalen Brunson"], "Jalen Brunson", "NY", "BOS", "2026-10-23T23:00:00Z",
+                                            2027, 5, 2, gid=999)]))
+    box = pd.concat([box, late], ignore_index=True)
+    assert flagged(box) == set() and left_early(box, TIP, 2027) == {}
+    assert left_early(box, datetime(2026, 10, 24, 3, 0, tzinfo=timezone.utc), 2027) == {"NY": {ids["Jalen Brunson"]: (5.0, 30.0)}}
+    # with two games this season his usual is this season's: 36 and 36 before a 17-minute start is under half
+    third = nba.normalize(pd.DataFrame([_row(ids["Jalen Brunson"], "Jalen Brunson", "NY", "BOS", "2026-10-26T23:00:00Z",
+                                             2027, 17, 8, gid=1001)]))
+    box = pd.concat([box.assign(minutes=box["minutes"].where(box["game_id"] != 999, 36.0)), third], ignore_index=True)
+    assert left_early(box, datetime(2026, 10, 27, 3, 0, tzinfo=timezone.utc), 2027)["NY"][ids["Jalen Brunson"]] == (17.0, 36.0)
+    # an All-Star exhibition game (its own team code, 3 minutes) is not one of his club's games: his usual stays 36
+    star = nba.normalize(pd.DataFrame([_row(ids["Jalen Brunson"], "Jalen Brunson", "STARS", "WORLD",
+                                            "2026-10-25T01:00:00Z", 2027, 3, 2, gid=1002)]))
+    early = left_early(pd.concat([box, star], ignore_index=True), datetime(2026, 10, 27, 3, 0, tzinfo=timezone.utc), 2027)
+    assert early["NY"] == {ids["Jalen Brunson"]: (17.0, 36.0)}
+
+
 class _StubModel:
     """Stands in for the learned boosters: every player plays with P=0.9 for 30 minutes."""
 
