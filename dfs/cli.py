@@ -181,8 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--kind", choices=["cash", "gpp"],
                    help="contest type (salary files do not say; entries files are read from contest names)")
     s.add_argument("--provider", choices=["generic"], help="use the file's site averages instead of the stats baseline")
-    s.add_argument("--objective", choices=["contest", "points"], default="contest",
-                   help="contest: the contest's own objective (P(top x%%) or P(cash)); points: the highest expected score")
+    s.add_argument("--objective", choices=["points", "contest"], default="points",
+                   help="points (default): the highest expected score; contest: the contest's own objective "
+                        "(P(top x%%) against a simulated field, or P(cash))")
     s.add_argument("--allow-lookahead", action="store_true",
                    help="with --now in the past, still search the web (it will see the games' results)")
     s.set_defaults(fn=_run)

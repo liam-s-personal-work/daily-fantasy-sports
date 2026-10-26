@@ -114,7 +114,9 @@ class RunConfig:
     provider: str | None = None  # force "generic" (CSV averages only) instead of the sport's data provider
     allow_lookahead: bool = False  # past-slate runs (now well before the real clock) turn web research off unless set
     kind: str | None = None  # "cash" or "gpp"; default: from the entries' contest names, else gpp
-    objective: str = "contest"  # "contest": the contest's objective; "points": the highest expected score
+    # "points" (default): the highest expected score, the best way found to land near the ex-post optimal lineup
+    # (docs/results/oracle_gap.md: no variance-seeking rule beat it on held-out slates); "contest": P(top x%) / P(cash)
+    objective: str = "points"
 
 
 @dataclass
