@@ -1,12 +1,16 @@
 # daily-fantasy-sports
 
 A lineup engine for DraftKings and FanDuel. Give it the CSV you download for a contest (salary file,
-player list, or the entries file with your registered entries). It returns a legal upload file built
-to maximise that contest's own objective: P(top 2.3%) in a tournament, P(cash) in a cash game. It
-also writes a report covering the top 3 per roster slot, close calls, the weakest pick and every
-check that ran.
+player list, or the entries file with your registered entries). It returns a legal upload file with
+the highest expected score. On held-out historical slates that rule came closest to the best lineup in
+hindsight ([docs/results/oracle_gap.md](docs/results/oracle_gap.md)). `--objective contest` instead
+maximises the contest's own objective: P(top 2.3%) in a tournament, P(cash) in a cash game. It also
+writes a report covering the top 3 per roster slot, close calls, the weakest pick and every check that
+ran.
 
 The plan, the design decisions and every measured result are in **[docs/PLAN.md](docs/PLAN.md)**.
+How close the lineups come to the best possible lineup on held-out slates is in
+**[docs/results/oracle_gap.md](docs/results/oracle_gap.md)**.
 
 ## Install
 
@@ -40,6 +44,8 @@ Useful `run` flags:
 
 - `--kind cash|gpp`: the contest type. Salary files do not say which; entries files are read from contest
   names.
+- `--objective points|contest`: `points` (default) takes the highest expected score; `contest` maximises
+  P(top x%) against a simulated field, or P(cash).
 - `--no-web`: structured data only, no web research.
 - `--no-forecast`: baseline only.
 - `--budget`: hard dollar cap, default $15.
@@ -52,6 +58,10 @@ The last call assumes the site holds the lineups the run wrote (`upload.csv`). I
 else, or want to be safe after the first kickoff, download the entries file again and pass it:
 `dfs lastcall runs/<id> --entries DKEntries.csv`. Each entry then starts from what the site holds, and the
 site's `(LOCKED)` cells stay where they are.
+
+NBA projections add a learned minutes model (`data/learned/nba_minutes_*`, trained by
+`scripts/fit_nba_minutes.py`) to the stats baseline. At last call, teams whose starting five is confirmed
+switch to a starter-aware version of it.
 
 Keep your contest files wherever you like. In the repo folder, `DK*.csv`, `FD*.csv`, `FanDuel*.csv` and
 `*contest-standings*.csv` are git-ignored, so they are never committed by accident.
@@ -73,8 +83,8 @@ Inside Claude Code, the `/dfs` skill runs the same steps.
   upload the file it writes.
 - Research uses web search, with page fetches limited to an allow-list enforced by the tool layer.
   Facts from DFS sites and from sites that forbid automated access are dropped (`dfs/sources.py`).
-- No method can promise a top-2.3% finish in every contest; PLAN.md §2 explains why. The engine
-  optimises for that finish and measures how often it gets there.
+- No method can promise a top-2.3% finish in every contest, or the best possible lineup on any night;
+  PLAN.md §2 and docs/results/oracle_gap.md explain why. The engine measures how close it gets.
 - Before playing for money, check that DFS is legal where you are and that you meet the age limit.
 
 ## Tests

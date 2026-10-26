@@ -21,18 +21,23 @@ it, surface its warnings, and relay its results honestly.
 4. `python -m dfs.cli run <file> [--kind cash|gpp] [--rules my_rules.yaml] [--field-size N]`. Pass
    `--kind` for salary files (they do not say which it is; entries files are read from contest names).
    Default budget $15, 55-minute deadline. Use `--no-web` for a quick structured-data-only run.
+   The lineup is the one with the highest expected score (`--objective points`, the default). Pass
+   `--objective contest` only if the user wants P(top x%) or P(cash) maximised instead.
 5. Report: the final lineup table from `runs/<id>/report.md`, the upload file path
    (`runs/<id>/upload.csv`), the second lineup with the user's rules if any, the strategist's
    weakest pick and close calls, and the checker's verdict. Quote the model's P(top x%) only as a
    model estimate. It assumes our projections are right, so it is optimistic.
+6. If the user wants each pick's reasoning and point range, `python -m dfs.cli explain runs/<id>` writes
+   `runs/<id>/lineup_explained.csv`.
 
 ## Last hour before lock
 
 `python -m dfs.cli lastcall runs/<id>`: searches news on every pick, checks inactives,
-re-forecasts affected NFL players, keeps started games locked, and changes the lineup only if a pick
-is out or a new lineup leads by more than 1%. Hand over `runs/<id>/upload_final.csv`. It assumes the
-site holds the run's `upload.csv`; if the user entered something else, or games have started, ask them
-to download the entries file again and pass `--entries <file>`. If it prints
+re-forecasts affected NFL players, re-projects NBA players from confirmed starting fives, keeps started
+games locked, and changes the lineup only if a pick is out or a new lineup leads by more than 1%. Hand
+over `runs/<id>/upload_final.csv`. It assumes the site holds the run's `upload.csv`; if the user entered
+something else, or games have started, ask them to download the entries file again and pass
+`--entries <file>`. If it prints
 "WARNING: the news/inactives check FAILED", say so plainly: those picks were not checked.
 
 ## After the slate
@@ -44,5 +49,5 @@ weights update from the graded errors.
 ## Rules you must keep
 
 - Never log in to, scrape, or automate DraftKings or FanDuel. The user downloads and uploads CSVs.
-- Never promise results. Every contest has variance; the engine's own measured results are in
-  `docs/PLAN.md`.
+- Never promise results, or that a lineup is the best possible one. Every contest has variance; the
+  engine's own measured results are in `docs/PLAN.md` and `docs/results/oracle_gap.md`.

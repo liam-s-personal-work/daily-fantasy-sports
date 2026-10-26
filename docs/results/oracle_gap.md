@@ -1,0 +1,215 @@
+# How close to the best possible lineup? (2026-10-26)
+
+The question: when you ask for a lineup, is it the highest-scoring lineup that could have been
+entered? This page measures that on held-out historical slates, for NBA, NFL and college football,
+and records which changes moved it.
+
+## What "perfect" means here, and why it can't be promised
+
+- **The target.** The ex-post optimal lineup: the legal lineup (roster slots, salary cap, players
+  from 2+ games) with the most actual DK points, solved exactly after the games.
+- **The metric.** `% of optimal` = actual points of the lineup we would have entered ÷ actual points
+  of that optimum. 100% is perfect.
+- **Why 100% can't be guaranteed.** The optimum is decided by who plays, for how long, and a
+  per-minute (or per-touch) outcome nobody knows before tip. Even if every projection were exactly
+  right on average, the best lineup on the night is the one whose players ran hot, and that is
+  noise from before the game's point of view. Three checks on this:
+  - In the selection experiments, every one of 3,000 simulated NFL Sundays (drawn from the engine's
+    own projections) had a different optimal lineup. The lineup that was most often best across 3,000
+    fresh simulations was best in 0.4% of them.
+  - On real NBA nights, knowing every player's exact minutes still never produced the optimum
+    (ceilings, below).
+  - No method in any experiment hit the exact optimum on any held-out slate (0 of 169 NBA nights,
+    0 of 24 NFL weeks).
+- **So the goal is the highest expected score**, which is the lineup that gets closest to the optimum
+  on average. Everything below is scored on that.
+
+## The harness
+
+- **Code:** `dfs/oracle.py` (exact MILP through scipy's HiGHS, the same rules as the site),
+  `scripts/oracle/evaluate.py` (scores any set of projection columns on every slate),
+  `scripts/oracle/{nba,nfl,cfb}_slates.py` (historical slates).
+- **Projections are point-in-time.** Each slate's projections use only games before that slate's
+  first tip or kickoff, through the same code the live engine runs.
+- **Salaries are DK-like, not DK's.** Historical DK salaries aren't available from a source that
+  allows automated access, so each sport has a salary model fit on real DK salary files
+  (`scripts/oracle/*_salary.py`) from what DK can see: season and recent DK points per game, not
+  our projections. NBA fit: R² 0.78.
+- **Who is in the pool.** NBA: everyone on tonight's box score except players out with a stated
+  reason (injury, illness, rest, suspension), since those are on the injury report before tip.
+  Coach's-decision DNPs stay in, at 0 points. NFL: the top players at each position per team by
+  the engine's own pre-game ranking (QB 1, RB 2, WR 3, TE 1) plus every DST, so pool membership
+  doesn't depend on who played. College: the same idea per team.
+- **Statistics.** Differences are in percentage points of optimal, with 95% paired bootstrap
+  intervals over slates. A per-slate difference has a standard deviation of 4–8 points, so small
+  effects need many slates.
+- **Protocol.** Every learned model trains on earlier seasons only and is scored on later ones:
+  - NBA: train 2024-25; test 2025-26 and 2026-27 (169 nights).
+  - NFL: train 2021-23; validate 2024; test 2025-26 (24 weeks).
+  - College: train 2024 and 2025; test 2026 weeks 2-8 (7 slates, too few to settle much).
+- **Audits.** Every experiment had an independent audit that tried to break it (leakage, training on
+  test, joins, slate selection). What they found is in the sections below.
+
+## NBA
+
+Held-out nights: 2025-26 and 2026-27 (169 nights; the 2026 All-Star night has no legal lineup). Learned
+models are trained on 2024-25 only. On these nights the best possible lineup averaged 414.6 DK points.
+
+| Projection | % of optimal | DK points | vs engine [95% CI] | nights ≥ 80% of optimal | Shipped |
+|---|---:|---:|---:|---:|:---:|
+| Site's own average (DK points per game) | 64.4% | 266.0 | −1.83 [−3.25, −0.48] | 3.6% | |
+| Engine: the stats baseline before this work | 66.3% | 273.6 | | 4.7% | |
+| **+ learned minutes model** | **70.4%** | **290.8** | **+4.12 [+2.80, +5.49]** | 11.2% | **yes** |
+| **+ confirmed starting fives (last call)** | **71.1%** | **294.4** | **+4.88 [+3.55, +6.26]** | 13.6% | **yes** |
+| Usage model: absent players' minutes and shots redistributed | 71.2% | 294.8 | +4.97 [+3.59, +6.41] | | no |
+| Average of the minutes and usage models | 71.2% | 294.2 | +0.79 [−0.14, +1.76] vs minutes | | no |
+
+The learned minutes model:
+
+- **Code.** `dfs/projections/nba_minutes.py`, trained by `scripts/fit_nba_minutes.py`. Two LightGBM
+  stages: P(plays), then minutes if he plays. Points = P(plays) × minutes × the engine's per-minute rate.
+- **Features**, all from games before tonight's first tip:
+  - the engine's own numbers;
+  - minutes in the team's last 1/3/5 games and the share he started;
+  - his rank on tonight's roster;
+  - minutes vacated by absent regulars;
+  - his minutes with and without each absent regular;
+  - how often he has sat after playing the night before;
+  - both teams' point differential.
+- **Live.** It runs after research, so research statuses still apply on top (`NBAProvider.after_research`).
+  The production model is retrained on all three seasons.
+- **Last call.** When a team's starting five is confirmed (cited, about 30 minutes before tip), that team
+  switches to the starter-aware tier.
+- **The last-call tier is noisier.** Over the six 2026-27 nights it is the weakest column (65.5%
+  against the engine's 67.3%). Its gain comes from 2025-26.
+- `python3 scripts/fit_nba_minutes.py --holdout` reproduces the two shipped rows above from scratch.
+
+**What didn't help:**
+
+- **A direct points model** (LightGBM on DK points, 48 features): +3.05 [+1.49, +4.63] over the engine.
+  That was measured on the earlier pool with injured players dropped afterwards, so it is not directly
+  comparable. It is weaker than the minutes model and was not shipped.
+- **A learned per-minute rate** on top of the learned minutes: −0.27 against the minutes model alone
+  (audit rerun).
+- **Retraining every month** (walk-forward): −0.23 against the single 2024-25 fit.
+- **The usage model.** It is as good as the minutes model on its own. The average of the two is +0.79
+  [−0.14, +1.76] over the minutes model, and worse on the six 2026-27 nights. That is not enough to carry
+  a second live model.
+
+**Ceilings.** The engine scored again with one piece replaced by the truth:
+
+| If we had known exactly… | % of optimal | nights ≥ 90% | exact optimum |
+|---|---:|---:|---:|
+| nothing (engine) | 66.3% | 1.2% | 0 of 169 |
+| who plays (the injury report is already known) | 66.5% | | 0 |
+| every player's minutes | 82.8% | 12.4% | 0 |
+| every player's points per minute | 86.7% | 39.6% | 0 |
+| both | 100% | 100% | 169 |
+
+Even with the exact minutes, or the exact per-minute scoring, no night lands on the optimum. The
+optimum needs both, and per-minute scoring (shooting luck) is the larger half. The minutes model closes
+about a quarter of the minutes gap: 66.3% → 70.4% of a possible 82.8%.
+
+**Selection rules** (2025-26 + 2026-27, engine projections, simulated correlated nights with
+correlations fit on 2024-25):
+
+| How the lineup is chosen | % of optimal | vs max expected points |
+|---|---:|---:|
+| Max expected points | 66.26% | |
+| Optimal in the most simulated nights | 63.75% | −2.51 [−3.81, −1.15] |
+| Wins most often in 2,000 fresh simulated nights | 66.78% | +0.52 [−0.11, +1.18] |
+| Bonus for P(in the optimal lineup), λ tuned on 2024-25 | 65.84% | −0.43 [−0.95, +0.09] |
+| 2+ players from the highest-total game | 65.68% | −0.58 [−1.32, +0.19] |
+| Max expected share of the optimum | 65.92% | −0.34 [−1.22, +0.55] |
+
+Nothing beats max expected points, so that is now the default objective (`--objective points`).
+
+## NFL
+
+| Change | Test slates | % of optimal | vs before [95% CI] | Shipped |
+|---|---:|---:|---:|:---:|
+| Engine before this work | 95 (all) | 53.3% | | |
+| Data fixes: depth-chart kickers and blank positions; week-1 QB starts read from the right season | 95 (all) | 54.7% | +1.41 [+0.24, +2.65] | yes |
+| Learned correction (LightGBM on the engine's residual, direct or blended) | 24 | 51.6–52.9% | −2.1 to −3.4 | no |
+| Heavily regularised residual model | 24 | 56.0% | +0.93 [−1.11, +3.07] | no |
+| Engine + game-day inactives zeroed | 24 | 55.3% | +0.22 [+0.00, +0.67] | already live (last call) |
+
+- **The learned correction lost.** It lowered player-level error slightly but its corrections are
+  mostly noise (correlation with the engine's actual error: 0.05), and the solver picks exactly the
+  players whose correction is wrongly high. Only heavy regularisation removed the damage.
+- **The audit removed the one positive.** The engine's own settings were tuned on 2024-25 weeks
+  3-17, which covers 15 of the 24 test weeks. On the 9 weeks it wasn't tuned on, the regularised model
+  is −0.14 [−4.05, +3.67] against the engine. It was also the best of about 8 variants viewed on the
+  test set. Not shipped.
+- **Selection rules.** Using the engine's simulator, with correlations fit on 2021-23 (QB with own
+  WR1 +0.36, QB with opposing DST −0.37), none of these beat max expected points:
+  - the most common simulated optimum;
+  - the lineup that wins most often;
+  - max expected share of the optimum;
+  - a bonus for P(in the optimal lineup).
+- **QB stacking.** Requiring the QB plus one of his own receivers scored +1.57 on the test weeks but
+  −1.38 on 2024 and +0.01 over all 95 weeks. Not shipped.
+- **Inactives.** The last call already rules out inactive players.
+- **Real prices.** Only two weeks have real DK prices (2026 weeks 3 and 6). There the engine scored
+  61.0% and 56.1% (pseudo-salaries: 53.0% and 64.5%). That is too few weeks to say whether the
+  pseudo-salaries flatter or hurt the engine.
+
+## College football
+
+33 DK classic slates: 2024 (13), 2025 (13) and 2026 weeks 2-8 (7). The salary model, pool and engine
+are as above.
+
+| Projection | 2024 | 2025 | 2026 (test) | 2026 vs engine [95% CI] | Shipped |
+|---|---:|---:|---:|---:|:---:|
+| Site-style average (DK points per game) | 43.1% | 42.6% | 44.9% | −6.5 [−19.1, +6.4] | |
+| Engine | 49.6% | 49.8% | 51.4% | | |
+| Learned model, direct (LightGBM on DK points) | 50.6% | 57.3% | 54.3% | +2.97 [−3.71, +9.90] | no |
+| Learned model, residual on the engine | 51.3% | 54.5% | 52.2% | +0.85 [−6.87, +9.28] | no |
+
+- **The protocol.** The 2026 models train on 2024 and 2025 only. The 2024 and 2025 columns are
+  out-of-fold, and the engine's own settings were fit on 2025, so only 2026 is a real test.
+- **Not shipped.** Seven test slates can't separate +3 points from zero.
+  - Each single-seed copy of the direct model scores between −2.2 and +0.2 on 2026, so most of the +3
+    is the luck of the seed average.
+  - Player-level error does improve in every season (RMSE −0.15 on 2026).
+  - The model also needs its own live feature pipeline.
+- **Audit: clean.** Retrained from scratch, the stored predictions matched exactly. The test season was
+  never used for training or tuning.
+- **The best lead to re-test** as 2026 slates accumulate.
+- **Shipped for college: a data fix.** Team-games missing from the play-by-play release (it lags a few
+  days) are now filled from the official box score instead of looking like missed games.
+
+## What shipped
+
+1. **NBA learned minutes model** (`dfs/projections/nba_minutes.py`, `data/learned/nba_minutes_*`): +4.1
+   points of optimal on held-out nights.
+2. **NBA confirmed starting fives at last call** (`dfs lastcall`): +4.9 in all over the engine.
+3. **Max expected points is the default objective.** The contest objective (P(top x%), P(cash)) is
+   still there with `--objective contest`.
+4. **NFL data fixes:** +1.4 over 95 weeks.
+5. **College play-by-play gap fill.**
+6. **The harness itself** (`dfs/oracle.py`, `scripts/oracle/`), so every future change is scored the
+   same way. Experiment scripts are kept in `scripts/oracle/exp_*.py`.
+
+**What a lineup is now, in plain numbers.** On a typical held-out NBA night it scores about 71% of the
+best lineup anyone could have entered. Before this work it scored 66%, and the site's average scored 64%.
+It reaches 80% of the optimum about one night in seven, up from one in twenty.
+
+## Caveats
+
+- **Pseudo-salaries.** Real DK prices are set by people who also read the news, so real slates have
+  fewer cheap players with big roles than these do. The absolute % of optimal is probably a little
+  high; the comparisons between methods use the same salaries for every method.
+- **NBA pools assume the injury report is known**, as it is at lock. A late scratch that research
+  misses still costs a lineup; the last call exists for that.
+- **The test seasons were reused** across several NBA experiments, so the best of them is slightly
+  flattered. The minutes model was chosen first, then checked again by audit.
+- **The engines were tuned on some test data.** The NBA engine's minutes settings came from the first 3
+  weeks of 2025-26 and its spread and p_zero settings from 2025-26. The NFL engine's settings came from
+  2024-25. That flatters the engine rows; the learned models were trained on 2024-25 (NBA) and 2021-23
+  (NFL) only.
+- **NBA features use tonight's active list**, as the injury report gives it, and live runs use
+  research for that.
+- **2026-27 is only 6 NBA nights** (the season started on 2026-10-21) and the minutes model is weaker
+  there than in 2025-26. Early-season minutes are the hardest part to project.
+- **College has 33 slates**, so its intervals are wide.

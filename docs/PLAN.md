@@ -77,13 +77,19 @@ so it never pretends to.
     top 2.3% only about 15–17% of the time (`docs/research/optimization_game_theory.md` §7.4).
 - **Cash games.** A top-2.3% finish pays nothing extra there; the right target is beating the cash line.
 
-So the engine puts your 2.3% **into the objective** rather than promising it:
+With `--objective contest` the engine puts your 2.3% **into the objective** rather than promising it:
 
 - **Tournaments:** it picks the lineup with the highest simulated chance of scoring above the field's
   97.7th percentile.
 - **Cash games:** it picks the lineup with the highest chance of beating the cash line.
 - **Multi-entry:** it builds the set greedily: each added tournament entry is the one that most raises the
   chance that at least one entry gets there. For cash games it takes the best entries one by one.
+
+The default since 2026-10-26 is `--objective points`: the lineup with the highest expected score. You
+asked for the highest-scoring lineup, and on held-out slates this rule came closest to the best lineup in
+hindsight. Every simulated alternative did worse, or not significantly better
+([docs/results/oracle_gap.md](results/oracle_gap.md)). That page also shows why the best lineup on a night
+can't be promised: knowing every NBA player's exact minutes still never produced it.
 
 Progress is tracked two ways:
 
@@ -384,6 +390,25 @@ These projections were committed before kickoff, so they can be graded honestly 
   - a slate with too few open games is built around the locked entries.
 - **Adversarial review:** the review covered file formats, mathematics, leakage, agent logic and
   compliance. Each finding was reproduced by a second agent before it counted (§9).
+
+### 6.8 How close to the best possible lineup (`docs/results/oracle_gap.md`)
+
+- **The measure.** Each held-out slate is scored as the actual points of the lineup we would have
+  entered ÷ the actual points of the best legal lineup, solved exactly after the games.
+- **NBA, 169 held-out nights:**
+
+  | Projection | % of the optimum |
+  |---|---:|
+  | Site's average | 64.4% |
+  | Engine before this work | 66.3% |
+  | + learned minutes model | 70.4% (+4.1 [+2.8, +5.5]) |
+  | + confirmed starters at last call | 71.1% |
+
+- **Exact optimum:** 0 nights, for every method, even with each player's exact minutes known.
+- **NFL:** data fixes moved the engine from 53.3% to 54.7% (+1.4 [+0.2, +2.7], 95 weeks). Learned
+  corrections didn't help.
+- **College:** a learned correction scored +3.0 [−3.7, +9.9] on 7 test slates, with single-seed copies of it
+  at −2.2 to +0.2. Not shipped.
 
 ## 7. Time and money per run
 
