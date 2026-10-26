@@ -511,3 +511,27 @@ def test_lastcall_flags_a_swappable_pick_the_news_says_nothing_about(cfg):
     out = lastcall(res.run_dir, web=True, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc),
                    backend=fake(news=lambda t: {"updates": []}), log=lambda s: None)
     assert any("no news came back" in w for w in out["warnings"])
+
+
+def test_points_objective_picks_the_highest_expected_score(cfg):
+    pts = dataclasses.replace(cfg, objective="points", out_dir=cfg.out_dir.parent / "runs_pts")
+    res = run(FIX / "dk_salaries_classic.csv", pts, backend=fake(), log=lambda s: None)
+    from dfs.optimize.ilp import solve
+    best = solve(res.contest, {k: p.mean for k, p in res.projections.items()})
+    exp = sum(res.projections[k].mean for k in res.final.player_keys)
+    assert exp == pytest.approx(sum(res.projections[k].mean for k in best.player_keys), abs=0.05)  # mean-optimal
+    assert "expected points" in (res.run_dir / "report.md").read_text()
+    out = lastcall(res.run_dir, web=False, now=datetime(2026, 10, 25, 12, 30, tzinfo=timezone.utc), backend=fake(),
+                   log=lambda s: None)
+    assert out["metric"] == "mean" and set(out["final"].player_keys) == set(res.final.player_keys)
+
+
+def test_every_pool_lineup_states_its_projected_mean(cfg):
+    from dfs import strategy
+    c = load_contest(FIX / "dk_salaries_classic.csv")
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    proj = res.projections
+    fm = strategy.field_for(c, proj, kind=c.kind, seed=3)
+    pool, _ = strategy.candidates(c, proj, base=strategy._base(set(), None, None, c), fm=fm, seed=3)
+    for lu in pool:
+        assert lu.mean == pytest.approx(sum(proj[s.player_key].mean * s.points_multiplier for s in lu.slots), abs=0.01)

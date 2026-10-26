@@ -669,6 +669,13 @@ def test_real_stat_lines_match_official_box(real_data):
 @pytest.mark.network
 def test_real_stat_lines_match_season_aggregates(real_data):
     lines = real_data.raw_lines[real_data.raw_lines["season"] == 2026]  # pre-repair, like the aggregate files
+    sch = cfbdata.load_season("schedules", 2026)
+    weeks = dict(zip(sch["game_id"].astype("int64"), sch["week"].astype("int64")))
+    tt = real_data.team_totals[real_data.team_totals["season"] == 2026]
+    lag = cs.missing_team_games(tt, cfbdata.load_season("team_box", 2026), weeks)
+    if len(lag):  # season totals cannot be cut back to the games the pbp release has
+        pytest.skip(f"the pbp release lags the season aggregates: {len(lag)} team-games (week "
+                    f"{int(lag['week'].max())}) are only in the box so far")
     rep = cs.validate_against_aggregates(lines, cfbdata.load_season("passing", 2026), cfbdata.load_season("rushing", 2026),
                                          cfbdata.load_season("receiving", 2026), cfbdata.load_season("schedules", 2026))
     for group in ("passing", "rushing", "receiving"):
@@ -730,3 +737,21 @@ def test_real_provider_end_to_end(real_data, tmp_path):
     for g in contest.games:
         assert "implied" in ctx.market[g]  # week 7 lines exist in the betting file
         assert blind_text(ctx.usage[g]) is not None
+
+
+def test_team_games_missing_from_the_pbp_are_filled_from_the_box():
+    lines = pd.DataFrame({"season": [2026], "week": [7], "game_id": [1], "team_id": [10], "athlete_id": [100],
+                          "name": ["A"], "pass_att": [30.0], "rush_att": [5.0]})
+    tt = pd.DataFrame({"season": [2026], "week": [7], "game_id": [1], "team_id": [10], "team_pass_att": [30],
+                       "team_carries": [25], "team_dropbacks": [32]})
+    team_box = pd.DataFrame({"season": [2026, 2026], "game_id": [1, 2], "team_id": [10, 10],
+                             "completionAttempts": ["20/30", "18/28"], "rushingAttempts": [27, 30]})
+    box = pd.DataFrame({"season": [2026, 2026], "game_id": [1, 2], "team_id": [10, 10], "athlete_id": [100, 100],
+                        "name": ["A", "A"], "pass_att": [30.0, 28.0], "rush_att": [5.0, 6.0]})
+    miss = cs.missing_team_games(tt, team_box, {1: 7, 2: 8})
+    assert list(zip(miss["game_id"], miss["week"])) == [(2, 8)]
+    fixed, flagged = cs.repair_with_box(lines, tt, box, team_box, weeks={1: 7, 2: 8})
+    wk8 = fixed[fixed["game_id"] == 2]
+    assert len(wk8) == 1 and wk8["week"].iloc[0] == 8 and wk8["stat_source"].iloc[0] == "box"
+    assert not wk8["usage_ok"].iloc[0] and fixed[fixed["game_id"] == 1]["stat_source"].iloc[0] == "pbp"
+    assert len(cs.repair_with_box(lines, tt, box, team_box)[0]) == 1  # without weeks: unchanged behaviour

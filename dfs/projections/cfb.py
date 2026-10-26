@@ -46,7 +46,7 @@ POSITIONS = ("QB", "RB", "WR", "TE")
 # losses) and DK/FD score from official stats; set False to score rushing without sack yards.
 SACKS_IN_RUSHING = True
 ROSTER_POS = {"QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB", "WR": "WR", "SB": "WR", "TE": "TE"}
-DERIVED_VERSION = "cfb-lines-v5"  # v5: postseason weeks remapped, ESPN team rows out of the box, two-point fixes
+DERIVED_VERSION = "cfb-lines-v6"  # v6: team-games missing from the pbp release filled from the box
 
 
 # --------------------------------------------------------------------------- parameters
@@ -203,7 +203,13 @@ def _season_lines(season, rosters, box_raw, team_box, max_age_hours, use_cache, 
     pbp = cfbdata.load_season("pbp", season, max_age_hours)
     lines, tt, stats = cs.player_game_lines(pbp, rosters)
     box = cs.box_lines(box_raw) if box_raw is not None and len(box_raw) else pd.DataFrame()
-    fixed, flagged = cs.repair_with_box(lines, tt, box, team_box)
+    try:  # game -> week, so team-games missing from the pbp release can be filled from the box
+        sch = cfbdata.load_season("schedules", season, max_age_hours)
+        weeks = dict(zip(pd.to_numeric(sch["game_id"], errors="coerce").dropna().astype("int64"),
+                         sch.loc[pd.to_numeric(sch["game_id"], errors="coerce").notna(), "week"].astype("int64")))
+    except Exception:  # schedules unavailable: only partial games are repaired
+        weeks = None
+    fixed, flagged = cs.repair_with_box(lines, tt, box, team_box, weeks=weeks)
     tt = tt.copy()
     bad = set(zip(flagged["game_id"], flagged["team_id"])) if len(flagged) else set()
     tt["usage_ok"] = [(g, t) not in bad for g, t in zip(tt["game_id"], tt["team_id"])]

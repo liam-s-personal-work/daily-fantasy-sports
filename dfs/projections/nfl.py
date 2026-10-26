@@ -1077,9 +1077,11 @@ def build_context(data: NFLData, season: int, week: int, params: NFLParams | Non
 
     usage = estimate_usage(hist, pool, season, week, P, league)
     pool = usage
-    # QB "started the team's last game" flag
-    last_team_game = hist.groupby("team")["wk"].max()
-    lastg = hist[hist["wk"] == hist["team"].map(last_team_game)]
+    # QB "started the team's last game" flag: this season's games only (in week 1 last season's final
+    # starter is stale; the depth chart decides)
+    cur = hist[hist["season"] == season]
+    last_team_game = cur.groupby("team")["wk"].max()
+    lastg = cur[cur["wk"] == cur["team"].map(last_team_game)]
     starters = lastg[lastg["pos"] == "QB"].sort_values("attempts").drop_duplicates("team", keep="last")
     started = set(zip(starters["gsis_id"], starters["team"]))
     pool["last_start"] = [float((g, t) in started) for g, t in zip(pool["gsis_id"], pool["team"])]

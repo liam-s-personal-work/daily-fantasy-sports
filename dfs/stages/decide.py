@@ -61,6 +61,8 @@ class Decider:
         return {k: p.mean for k, p in self.proj.items() if k not in exclude}
 
     def _objective_name(self) -> str:
+        if getattr(self.cfg, "objective", "contest") == "points":
+            return "maximise expected points (the highest-scoring lineup on average)"
         if self.kind == ContestKind.CASH:
             return "maximise P(beating the cash line ~ field median)"
         return f"maximise P(finishing in the top {self.cfg.target_top:.1%}) against a simulated field"
@@ -78,7 +80,8 @@ class Decider:
         res = sel.best_lineups(self.c, proj, self.keys, self.sims, self.field, kind=kind or self.kind,
                                target_top=self.cfg.target_top, n=n or 1, exclude=set(exclude) | self.started,
                                user_rules=user_rules, seed=self.cfg.seed, scale=scale,
-                               slot_locks=self._fallback_locks if slot_locks is None else slot_locks)
+                               slot_locks=self._fallback_locks if slot_locks is None else slot_locks,
+                               objective=getattr(self.cfg, "objective", "contest"))
         for lu in res["lineups"]:
             lu.label = label
         return res["lineups"][0], res

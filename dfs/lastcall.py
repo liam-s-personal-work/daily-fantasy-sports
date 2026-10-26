@@ -182,21 +182,30 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
                           seed=int(cfg.get("seed", 11)))
     fm = strategy.field_for(c, proj, kind=c.kind, seed=int(cfg.get("seed", 11)))
     target = float(cfg.get("target_top", 0.023))
-    metric = "p_cash" if c.kind.value == "cash" else "p_top"
+    objective = cfg.get("objective", "contest")
+    metric = "mean" if objective == "points" else "p_cash" if c.kind.value == "cash" else "p_top"
 
     current_ok = not (set(final.player_keys) & swap_out)
     cur = final.model_copy(deep=True)
     if current_ok:
         strategy.evaluate([cur], keys, sims, fm, target)
     res = strategy.best_lineups(c, proj, keys, sims, fm, kind=c.kind, target_top=float(cfg.get("target_top", 0.023)),
-                                exclude=started | swap_out | run_excl, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final))
+                                exclude=started | swap_out | run_excl, seed=int(cfg.get("seed", 11)), slot_locks=slot_locks(final),
+                                objective=objective)
     new = res["lineups"][0]
 
-    lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
-    # The lead must beat both the user's 1% bar and the simulation's own noise (2 standard errors).
-    n_s = sims.shape[0]
-    se = (sum(m.get(metric, 0.0) * (1 - m.get(metric, 0.0)) for m in (new.metrics, cur.metrics)) / n_s) ** 0.5
-    noise_ok = (new.metrics.get(metric, 0.0) - cur.metrics.get(metric, 0.0)) > 2 * se
+    if objective == "points":  # projected means are exact, so no simulation noise to clear
+        def exp_pts(lu):
+            return sum(proj[sl.player_key].mean * sl.points_multiplier for sl in lu.slots if sl.player_key in proj)
+        cur_v = exp_pts(cur) if current_ok else 0.0
+        lead = (exp_pts(new) - cur_v) / max(cur_v, 1e-9) if current_ok else float("inf")
+        noise_ok = True
+    else:
+        lead = (new.metrics[metric] - cur.metrics.get(metric, 0.0)) / max(cur.metrics.get(metric, 0.0), 1e-9) if current_ok else float("inf")
+        # The lead must beat both the user's 1% bar and the simulation's own noise (2 standard errors).
+        n_s = sims.shape[0]
+        se = (sum(m.get(metric, 0.0) * (1 - m.get(metric, 0.0)) for m in (new.metrics, cur.metrics)) / n_s) ** 0.5
+        noise_ok = (new.metrics.get(metric, 0.0) - cur.metrics.get(metric, 0.0)) > 2 * se
     change = (not current_ok) or (lead > threshold and noise_ok)
     chosen = new if change else cur
     problems = check_legal(c, chosen)
@@ -218,7 +227,7 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
         try:
             r = strategy.best_lineups(c, proj, keys, sims, strategy.field_for(c, proj, kind=kind, seed=int(cfg.get("seed", 11))),
                                       kind=kind, target_top=target, n=len(idx), exclude=started_all | swap_out | run_excl,
-                                      seed=int(cfg.get("seed", 11)))
+                                      seed=int(cfg.get("seed", 11)), objective=objective)
             for j, i in enumerate(idx):
                 rebuilt[i] = r["lineups"][j % len(r["lineups"])]
         except Infeasible:

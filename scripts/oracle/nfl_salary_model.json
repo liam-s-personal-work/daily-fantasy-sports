@@ -1,0 +1,281 @@
+{
+ "table": "draftkings.nfl",
+ "files": [
+  "contest.json",
+  "dk_classic_wk6_main_18Oct2026.csv"
+ ],
+ "positions": {
+  "QB": {
+   "k": 5.0,
+   "extra": [
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    4024.8377,
+    30.4014,
+    -18.9336,
+    -1574.8073,
+    173.4767
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3_blend",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    4000,
+    9000
+   ]
+  },
+  "RB": {
+   "k": 3.0,
+   "extra": [
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    3994.8241,
+    55.2446,
+    -2.1642,
+    -590.2058,
+    147.6867
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3_blend",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    4000,
+    9500
+   ]
+  },
+  "WR": {
+   "k": 3.0,
+   "extra": [
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    3018.8862,
+    -12.2405,
+    27.184,
+    -487.827,
+    229.753
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3_blend",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    3000,
+    9500
+   ]
+  },
+  "TE": {
+   "k": 3.0,
+   "extra": [
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    1608.1833,
+    262.5505,
+    -43.6501,
+    -83.8003,
+    44.6572
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3_blend",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    2500,
+    8000
+   ]
+  },
+  "DST": {
+   "k": 34.0,
+   "extra": [
+    "implied",
+    "opp_implied"
+   ],
+   "coef": [
+    3274.8585,
+    228.2285,
+    -205.2682,
+    66.5148,
+    -92.9521
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3_blend",
+    "implied",
+    "opp_implied"
+   ],
+   "range": [
+    2000,
+    4500
+   ]
+  }
+ },
+ "no_history": {
+  "DST|starter": 2800.0,
+  "QB|backup": 4000.0,
+  "QB|other": 4000.0,
+  "QB|starter": 5600.0,
+  "RB|backup": 4200.0,
+  "RB|other": 4000.0,
+  "RB|starter": 6300.0,
+  "TE|backup": 2500.0,
+  "TE|other": 2500.0,
+  "TE|starter": 4000.0,
+  "WR|backup": 3000.0,
+  "WR|other": 3000.0,
+  "WR|starter": 4600.0
+ },
+ "fit": {
+  "QB": {
+   "in_sample": {
+    "r2": 0.873,
+    "mae": 217.8,
+    "n": 107
+   },
+   "above_floor": {
+    "r2": 0.7299,
+    "mae": 323.3,
+    "n": 60
+   },
+   "leave_one_file_out_mae": 241.1,
+   "k": 5.0,
+   "fit_other_file_score_contest.json": {
+    "r2": 0.8417,
+    "mae": 267.2,
+    "n": 58
+   },
+   "fit_other_file_score_dk_classic_wk6_main_18Oct2026.csv": {
+    "r2": 0.8812,
+    "mae": 210.2,
+    "n": 49
+   }
+  },
+  "RB": {
+   "in_sample": {
+    "r2": 0.9105,
+    "mae": 211.0,
+    "n": 228
+   },
+   "above_floor": {
+    "r2": 0.8791,
+    "mae": 302.8,
+    "n": 109
+   },
+   "leave_one_file_out_mae": 234.2,
+   "k": 3.0,
+   "fit_other_file_score_contest.json": {
+    "r2": 0.9184,
+    "mae": 214.7,
+    "n": 129
+   },
+   "fit_other_file_score_dk_classic_wk6_main_18Oct2026.csv": {
+    "r2": 0.8702,
+    "mae": 259.6,
+    "n": 99
+   }
+  },
+  "WR": {
+   "in_sample": {
+    "r2": 0.8941,
+    "mae": 227.5,
+    "n": 338
+   },
+   "above_floor": {
+    "r2": 0.825,
+    "mae": 388.9,
+    "n": 171
+   },
+   "leave_one_file_out_mae": 235.5,
+   "k": 3.0,
+   "fit_other_file_score_contest.json": {
+    "r2": 0.8981,
+    "mae": 234.7,
+    "n": 190
+   },
+   "fit_other_file_score_dk_classic_wk6_main_18Oct2026.csv": {
+    "r2": 0.8715,
+    "mae": 236.5,
+    "n": 148
+   }
+  },
+  "TE": {
+   "in_sample": {
+    "r2": 0.9199,
+    "mae": 114.1,
+    "n": 206
+   },
+   "above_floor": {
+    "r2": 0.8536,
+    "mae": 326.5,
+    "n": 68
+   },
+   "leave_one_file_out_mae": 135.4,
+   "k": 3.0,
+   "fit_other_file_score_contest.json": {
+    "r2": 0.8603,
+    "mae": 137.2,
+    "n": 113
+   },
+   "fit_other_file_score_dk_classic_wk6_main_18Oct2026.csv": {
+    "r2": 0.9111,
+    "mae": 133.3,
+    "n": 93
+   }
+  },
+  "DST": {
+   "in_sample": {
+    "r2": 0.8514,
+    "mae": 150.0,
+    "n": 46
+   },
+   "above_floor": {
+    "r2": 0.8308,
+    "mae": 156.8,
+    "n": 44
+   },
+   "leave_one_file_out_mae": 156.5,
+   "k": 34.0,
+   "fit_other_file_score_contest.json": {
+    "r2": 0.8432,
+    "mae": 165.4,
+    "n": 26
+   },
+   "fit_other_file_score_dk_classic_wk6_main_18Oct2026.csv": {
+    "r2": 0.8326,
+    "mae": 145.0,
+    "n": 20
+   }
+  },
+  "ALL": {
+   "r2": 0.9309,
+   "mae": 193.2,
+   "n": 925
+  },
+  "rows_without_history": 239,
+  "rows_by_file": {
+   "contest.json": 659,
+   "dk_classic_wk6_main_18Oct2026.csv": 505
+  }
+ }
+}

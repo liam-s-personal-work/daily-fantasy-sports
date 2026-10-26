@@ -114,6 +114,7 @@ class RunConfig:
     provider: str | None = None  # force "generic" (CSV averages only) instead of the sport's data provider
     allow_lookahead: bool = False  # past-slate runs (now well before the real clock) turn web research off unless set
     kind: str | None = None  # "cash" or "gpp"; default: from the entries' contest names, else gpp
+    objective: str = "contest"  # "contest": the contest's objective; "points": the highest expected score
 
 
 @dataclass

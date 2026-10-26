@@ -165,3 +165,21 @@ def test_actual_points_match_site_season_averages_for_returners(week6):
     ok = (f["FPPG"] * f["Played"] - f["mine"]).abs() < 0.06
     assert len(f) > 200 and ok.mean() > 0.99
     assert ok[f["Nickname"].isin(["Chimere Dike", "Dylan Laube", "Dareke Young"])].all()
+
+
+@pytest.mark.network
+def test_weekly_depth_chart_ignores_return_men_and_blank_slots():
+    from dfs.data import nflverse as nv
+    x = nv.depth_chart_asof(2021, week=1, depth=nv.load("depth_charts", [2021]))
+    wr = list(x[(x.team == "MIN") & (x.pos == "WR")].sort_values("rank")["player_name"].head(2))
+    te = list(x[(x.team == "KC") & (x.pos == "TE")].sort_values("rank")["player_name"].head(1))
+    assert wr == ["Adam Thielen", "Justin Jefferson"] and te == ["Travis Kelce"]  # not the KR/PR or a blank slot
+
+
+@pytest.mark.network
+def test_week_one_starter_is_the_depth_chart_qb_not_last_seasons_finale():
+    from dfs.projections.nfl import NFLData, build_context, project_context
+    data = NFLData.load([2023, 2024])
+    proj = project_context(build_context(data, 2024, 1), ["draftkings.nfl"], n_sims=500)["draftkings.nfl"]
+    qbs = proj[(proj["kind"] == "player") & (proj["pos"] == "QB")].set_index("name")
+    assert qbs.loc["Justin Herbert", "p_play"] > 0.8 and qbs.loc["Joe Burrow", "p_play"] > 0.8

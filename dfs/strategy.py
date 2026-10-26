@@ -93,7 +93,10 @@ def candidates(contest: Contest, proj: dict[str, Projection], *, base: SolveOpti
         cands += sx.stack_variants(contest, pts, 6, (1, 2), (0, 1), base, t0 + time_budget_s)
     if fm is not None and sx._can_prune(base) and not base.lock_keys and not base.exclude_keys and not base.slot_locks:
         order = np.argsort(-fm.weights)[:15]
-        cands += [fm.lineups[i].model_copy(update={"label": f"field{r + 1}"}) for r, i in enumerate(order)]
+        # field lineups carry the simulated field's own numbers in .mean: restate them in our projections
+        cands += [fm.lineups[i].model_copy(update={"label": f"field{r + 1}", "mean": round(sum(
+            pts.get(sl.player_key, 0.0) * sl.points_multiplier for sl in fm.lineups[i].slots), 3)})
+            for r, i in enumerate(order)]
     pool = sx.dedupe(cands + half + draws)
     _POOLS[key] = (pool, draws)
     return [lu.model_copy(deep=True) for lu in pool], draws
@@ -113,21 +116,34 @@ def _scaled(sims: np.ndarray, keys: list[str], scale: dict[str, float] | None) -
 def best_lineups(contest: Contest, proj: dict[str, Projection], keys: list[str], sims: np.ndarray,
                  fm: FieldModel | None, *, kind: ContestKind, target_top: float, n: int = 1,
                  exclude: set[str] = frozenset(), user_rules: UserRules | None = None, seed: int = 0,
-                 scale: dict[str, float] | None = None, slot_locks: dict[int, str] | None = None) -> dict[str, Any]:
+                 scale: dict[str, float] | None = None, slot_locks: dict[int, str] | None = None,
+                 objective: str = "contest") -> dict[str, Any]:
     """Best lineup(s) for the contest objective. ``sims`` are the evaluation draws (seed ``seed``)
-    for ``keys``; ``scale`` multiplies a player's simulated points (backup review adjustments)."""
+    for ``keys``; ``scale`` multiplies a player's simulated points (backup review adjustments).
+    ``objective="points"``: the highest expected score instead (the projected mean; the pool always
+    holds the mean-optimal lineups)."""
     base = _base(exclude, user_rules, slot_locks, contest)
     pool, _ = candidates(contest, proj, base=base, fm=fm, seed=seed)
     if not pool:
         raise Infeasible("no legal lineup for the current rules and exclusions")
-    if fm is None:  # no field model: rank by mean
+    if fm is None:  # no field model: rank by mean (also the "points" objective)
         for lu in pool:
             lu.metrics.update({"mean": lu.mean})
         return {"lineups": sorted(pool, key=lambda lu: -lu.mean)[:n], "pool_size": len(pool), "objective": "mean"}
     ev = sx.score_against_field(pool, keys, _scaled(sims, keys, scale), fm, top_frac=target_top,
                                 field_size=contest.field_size)
-    chosen = sx.choose_portfolio(ev, n, kind) if n > 1 else sx.choose(ev.lineups, kind)[:1]
-    return {"lineups": chosen, "pool_size": len(pool), "objective": sx.objective_metric(kind),
+    if objective == "points":
+        # rank by the projected mean, recomputed: a pool lineup built in a simulated world carries that
+        # world's score in .mean
+        def exp_pts(lu: Lineup) -> float:
+            return sum(proj[sl.player_key].mean * sl.points_multiplier for sl in lu.slots if sl.player_key in proj)
+        chosen = sorted(ev.lineups, key=lambda lu: (-round(exp_pts(lu), 6), -lu.metrics["mean"]))[:n]
+        for i, lu in enumerate(chosen):
+            lu.metrics["rank"] = float(i + 1)
+            lu.metrics["expected_points"] = exp_pts(lu)
+    else:
+        chosen = sx.choose_portfolio(ev, n, kind) if n > 1 else sx.choose(ev.lineups, kind)[:1]
+    return {"lineups": chosen, "pool_size": len(pool), "objective": "mean" if objective == "points" else sx.objective_metric(kind),
             "best_metrics": chosen[0].metrics, "cash_line_mean": float(np.mean(ev.cash_line)),
             "top_cut_mean": float(np.mean(ev.top_cut))}
 

@@ -258,10 +258,14 @@ def depth_chart_asof(season: int, as_of: datetime | str | None = None, week: int
         if week is None:
             raise ValueError("weekly depth charts need a week")
         d = d[(d["week"] == week) & (d["formation"].isin(["Offense", "Special Teams"]))]
+        # special-teams rows only for kickers: a WR listed first at KR/PR is not the WR1
+        dp = d["depth_position"].astype(str).str.strip()
+        d = d[(d["formation"] == "Offense") | dp.isin(["K", "PK"])]
         pos = d["depth_position"].astype(str).str.strip().map(_DC_POS)
+        blank = pos.isna()  # no chart slot (e.g. "\n"): ranked after every real slot of that position
         pos = pos.fillna(d["position"].map(_DC_POS))
         out = pd.DataFrame({"team": d["club_code"], "gsis_id": d["gsis_id"], "pos": pos,
-                            "raw_rank": pd.to_numeric(d["depth_team"], errors="coerce"),
+                            "raw_rank": pd.to_numeric(d["depth_team"], errors="coerce") + 100.0 * blank,
                             "player_name": d["full_name"]})
     out = out.dropna(subset=["pos", "gsis_id"])
     out["team"] = out["team"].map(lambda t: canonicalize(t, strict=False))

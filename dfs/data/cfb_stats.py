@@ -777,9 +777,31 @@ def incomplete_team_games(team_totals: pd.DataFrame, team_box: pd.DataFrame, tol
     return j.loc[bad, ["season", "week", "game_id", "team_id", "pbp_att", "box_att", "pbp_rush", "box_rush"]].reset_index(drop=True)
 
 
+def missing_team_games(team_totals: pd.DataFrame, team_box: pd.DataFrame,
+                       weeks: dict[int, int] | None) -> pd.DataFrame:
+    """Team-games in the official team box but absent from the play-by-play entirely (the release
+    lags a few days after a weekend). ``weeks``: game_id -> week (from the schedule)."""
+    cols = ["season", "week", "game_id", "team_id", "pbp_att", "box_att", "pbp_rush", "box_rush"]
+    if team_box is None or team_box.empty or not weeks:
+        return pd.DataFrame(columns=cols)
+    tb = team_box[["game_id", "team_id", "season"]].copy()
+    tb["game_id"] = pd.to_numeric(tb["game_id"], errors="coerce")
+    tb["team_id"] = pd.to_numeric(tb["team_id"], errors="coerce")
+    tb = tb.dropna().astype({"game_id": "int64", "team_id": "int64", "season": "int64"}).drop_duplicates()
+    have = set(zip(team_totals["game_id"].astype("int64"), team_totals["team_id"].astype("int64")))
+    tb = tb[[(g, t) not in have for g, t in zip(tb["game_id"], tb["team_id"])]]
+    tb["week"] = tb["game_id"].map(weeks)
+    tb = tb.dropna(subset=["week"]).astype({"week": "int64"})
+    for c in ("pbp_att", "box_att", "pbp_rush", "box_rush"):
+        tb[c] = 0.0 if c.startswith("pbp") else float("nan")
+    return tb[cols].reset_index(drop=True)
+
+
 def repair_with_box(lines: pd.DataFrame, team_totals: pd.DataFrame, box: pd.DataFrame,
-                    team_box: pd.DataFrame, tol: float = 0.15) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Replace scoring stats with the official box line for team-games whose pbp is incomplete.
+                    team_box: pd.DataFrame, tol: float = 0.15,
+                    weeks: dict[int, int] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Replace scoring stats with the official box line for team-games whose pbp is incomplete, and
+    add box lines for team-games missing from the pbp altogether (needs ``weeks``: game_id -> week).
 
     Returns (lines with ``stat_source`` in {pbp, box} and ``usage_ok``, flagged team-games). Usage
     columns (targets, carries, sacks) of repaired team-games keep their partial pbp values but are
@@ -789,6 +811,9 @@ def repair_with_box(lines: pd.DataFrame, team_totals: pd.DataFrame, box: pd.Data
     out["stat_source"] = "pbp"
     out["usage_ok"] = True
     flagged = incomplete_team_games(team_totals, team_box, tol)
+    missing = missing_team_games(team_totals, team_box, weeks)
+    if len(missing):
+        flagged = pd.concat([flagged, missing], ignore_index=True) if len(flagged) else missing
     if flagged.empty or box is None or box.empty:
         return out, flagged
     key = set(zip(flagged["game_id"], flagged["team_id"]))
