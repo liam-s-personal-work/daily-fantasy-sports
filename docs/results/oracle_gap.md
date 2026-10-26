@@ -82,7 +82,22 @@ The learned minutes model:
   switches to the starter-aware tier.
 - **The last-call tier is noisier.** Over the six 2026-27 nights it is the weakest column (65.5%
   against the engine's 67.3%). Its gain comes from 2025-26.
+- **Early season,** which is now: over the 26 opening nights (the first 20 of 2025-26 plus the first 6
+  of 2026-27), the main model is +3.04 [+0.84, +5.46] and last call +3.11 [+1.14, +4.97]. Over the
+  rest of 2025-26 they are +4.32 and +5.20.
+- **One night with real DK prices** (2026-10-23, the full engine run with structured data only):
+
+  | Projection | DK points | % of the optimum (383.0) |
+  |---|---:|---:|
+  | Site's average | 191.0 | 49.9% |
+  | Engine | 229.5 | 59.9% |
+  | With the minutes model | 247.5 | 64.6% |
+
+  One night is anecdote, not evidence, but it points the same way.
 - `python3 scripts/fit_nba_minutes.py --holdout` reproduces the two shipped rows above from scratch.
+- **Expect about +3.7, not +4.1.** Five other random seeds of the same main model score +3.64 to +3.73
+  (69.9–70.0% of optimal), so the shipped fit's +4.12 is a lucky draw of about 0.4. Averaging five seeds
+  doesn't help: +3.47 for main, +4.83 for last call (shipped last call: +4.88).
 
 **What didn't help:**
 
@@ -90,8 +105,8 @@ The learned minutes model:
   That was measured on the earlier pool with injured players dropped afterwards, so it is not directly
   comparable. It is weaker than the minutes model and was not shipped.
 - **A learned per-minute rate** on top of the learned minutes: −0.27 against the minutes model alone
-  (audit rerun).
-- **Retraining every month** (walk-forward): −0.23 against the single 2024-25 fit.
+  (earlier pool, audit rerun).
+- **Retraining every month** (walk-forward): −0.23 against the single 2024-25 fit (earlier pool).
 - **The usage model.** It is as good as the minutes model on its own. The average of the two is +0.79
   [−0.14, +1.76] over the minutes model, and worse on the six 2026-27 nights. That is not enough to carry
   a second live model.
@@ -101,7 +116,7 @@ The learned minutes model:
 | If we had known exactly… | % of optimal | nights ≥ 90% | exact optimum |
 |---|---:|---:|---:|
 | nothing (engine) | 66.3% | 1.2% | 0 of 169 |
-| who plays (the injury report is already known) | 66.5% | | 0 |
+| who plays (the injury report is already known) | 66.5% | 1.2% | 0 |
 | every player's minutes | 82.8% | 12.4% | 0 |
 | every player's points per minute | 86.7% | 39.6% | 0 |
 | both | 100% | 100% | 169 |
@@ -123,6 +138,11 @@ correlations fit on 2024-25):
 | Max expected share of the optimum | 65.92% | −0.34 [−1.22, +0.55] |
 
 Nothing beats max expected points, so that is now the default objective (`--objective points`).
+
+**The chosen lineups' projections are honest.** The minutes model's lineups were projected at 292.2
+points and scored 290.8 on average; the engine's, 276.5 and 273.6. Picking the top of a noisy list
+usually overstates it ("winner's curse"), but here that costs 1–3 points, so shrinking projections has
+little to recover. The site's own average, by contrast, projected 283.0 and scored 266.0.
 
 ## NFL
 
@@ -182,7 +202,7 @@ are as above.
 ## What shipped
 
 1. **NBA learned minutes model** (`dfs/projections/nba_minutes.py`, `data/learned/nba_minutes_*`): +4.1
-   points of optimal on held-out nights.
+   points of optimal on held-out nights (+3.7 for a typical seed).
 2. **NBA confirmed starting fives at last call** (`dfs lastcall`): +4.9 in all over the engine.
 3. **Max expected points is the default objective.** The contest objective (P(top x%), P(cash)) is
    still there with `--objective contest`.

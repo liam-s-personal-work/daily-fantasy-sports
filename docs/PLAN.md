@@ -401,7 +401,7 @@ These projections were committed before kickoff, so they can be graded honestly 
   |---|---:|
   | Site's average | 64.4% |
   | Engine before this work | 66.3% |
-  | + learned minutes model | 70.4% (+4.1 [+2.8, +5.5]) |
+  | + learned minutes model | 70.4% (+4.1 [+2.8, +5.5]; other seeds +3.6 to +3.7) |
   | + confirmed starters at last call | 71.1% |
 
 - **Exact optimum:** 0 nights, for every method, even with each player's exact minutes known.
