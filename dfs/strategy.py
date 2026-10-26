@@ -123,6 +123,8 @@ def best_lineups(contest: Contest, proj: dict[str, Projection], keys: list[str],
     ``objective="points"``: the highest expected score instead (the projected mean; the pool always
     holds the mean-optimal lineups)."""
     base = _base(exclude, user_rules, slot_locks, contest)
+    if objective == "points" and n > 1:
+        return _points_portfolio(contest, proj, keys, sims, fm, n=n, base=base, target_top=target_top)
     pool, _ = candidates(contest, proj, base=base, fm=fm, seed=seed)
     if not pool:
         raise Infeasible("no legal lineup for the current rules and exclusions")
@@ -146,6 +148,30 @@ def best_lineups(contest: Contest, proj: dict[str, Projection], keys: list[str],
     return {"lineups": chosen, "pool_size": len(pool), "objective": "mean" if objective == "points" else sx.objective_metric(kind),
             "best_metrics": chosen[0].metrics, "cash_line_mean": float(np.mean(ev.cash_line)),
             "top_cut_mean": float(np.mean(ev.top_cut))}
+
+
+# Several entries under the points objective: the best lineup, then each next-best lineup that differs from
+# every earlier one by at least this many players. On held-out NBA nights the best of 10 such entries scored
+# 77.4% of the ex-post optimum, against 76.0% for the plain top 10 and 70.6% for one entry; 4 was chosen
+# from 1-4 on separate validation nights (docs/results/oracle_gap.md).
+PORTFOLIO_MIN_DIFF = 4
+
+
+def _points_portfolio(contest: Contest, proj: dict[str, Projection], keys: list[str], sims: np.ndarray,
+                      fm: FieldModel | None, *, n: int, base: SolveOptions, target_top: float,
+                      time_budget_s: float = 120.0) -> dict[str, Any]:
+    pts = {k: p.mean for k, p in proj.items()}
+    chosen = sx.mean_optimal(contest, pts, n, PORTFOLIO_MIN_DIFF, base, time.perf_counter() + time_budget_s)
+    if not chosen:
+        raise Infeasible("no legal lineup for the current rules and exclusions")
+    evaluate(chosen, keys, sims, fm, target_top)
+    for i, lu in enumerate(chosen):
+        lu.metrics.update({"rank": float(i + 1), "mean": lu.mean, "expected_points": lu.mean})
+    out = {"lineups": chosen, "pool_size": len(chosen), "objective": "mean", "best_metrics": chosen[0].metrics}
+    if fm is not None:
+        ev = sx.score_against_field(chosen[:1], keys, sims, fm, top_frac=target_top, field_size=contest.field_size)
+        out.update(cash_line_mean=float(np.mean(ev.cash_line)), top_cut_mean=float(np.mean(ev.top_cut)))
+    return out
 
 
 def evaluate(lineups: list[Lineup], keys: list[str], sims: np.ndarray, fm: FieldModel | None,

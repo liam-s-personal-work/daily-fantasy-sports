@@ -526,6 +526,29 @@ def test_points_objective_picks_the_highest_expected_score(cfg):
     assert out["metric"] == "mean" and set(out["final"].player_keys) == set(res.final.player_keys)
 
 
+def test_points_objective_entries_are_the_best_lineups_that_differ_by_four_players(cfg):
+    import numpy as np
+    from dfs import strategy
+    from dfs.optimize.ilp import solve
+    res = run(FIX / "dk_salaries_classic.csv", cfg, backend=fake(), log=lambda s: None)
+    c, proj = res.contest, res.projections
+    lus = strategy.best_lineups(c, proj, [], np.zeros((0, 0)), None, kind=c.kind, target_top=0.023, n=6,
+                                objective="points")["lineups"]
+    assert len(lus) == 6 and lus[0].mean == pytest.approx(solve(c, {k: p.mean for k, p in proj.items()}).mean, abs=0.01)
+    for i, lu in enumerate(lus):
+        assert not check_legal(c, lu) and lu.mean <= lus[0].mean + 1e-6
+        assert all(len(set(lu.player_keys) - set(prev.player_keys)) >= strategy.PORTFOLIO_MIN_DIFF for prev in lus[:i])
+    # three open entries in one tournament: the file's portfolio follows the same rule
+    text = (FIX / "dk_entries_classic.csv").read_text().replace(" (LOCKED)", "").replace("NFL $1K Double Up",
+                                                                                       "NFL $5K Test Shot [20 Entry Max]")
+    path = cfg.out_dir.parent / "DKEntries_open.csv"
+    path.write_text(text)
+    pts = dataclasses.replace(cfg, objective="points", out_dir=cfg.out_dir.parent / "runs_pts_multi")
+    multi = run(path, pts, backend=fake(), log=lambda s: None)
+    ids = [set(v) for v in _cells(multi.upload_path).values()]
+    assert len(ids) == 3 and all(len(a - b) >= strategy.PORTFOLIO_MIN_DIFF for i, a in enumerate(ids) for b in ids[:i])
+
+
 def test_every_pool_lineup_states_its_projected_mean(cfg):
     from dfs import strategy
     c = load_contest(FIX / "dk_salaries_classic.csv")
