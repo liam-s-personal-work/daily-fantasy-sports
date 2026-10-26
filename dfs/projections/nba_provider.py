@@ -325,7 +325,7 @@ class NBAProvider:
         try:
             model = nr.RateModel.load(self.minutes_dir)
             if model is None:
-                return dict.fromkeys(rows["key"], 1.0), f"rate model not applied (no files in {self.minutes_dir})"
+                return dict.fromkeys(rows["key"], 1.0), f"rate model not applied (files missing or unreadable in {self.minutes_dir})"
             feats = nr.build_rate_features(rows, self.box, cutoffs={"live": cutoff})
             mult = dict(zip(feats["key"], (float(x) for x in model.multiplier(feats))))
             return mult, (f"rate model applied to {len(mult)} players (points per minute x{min(mult.values()):.2f}"

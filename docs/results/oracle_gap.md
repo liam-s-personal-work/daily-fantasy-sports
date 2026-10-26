@@ -97,7 +97,7 @@ The learned minutes model:
   One night is anecdote, not evidence. The minutes model pointed the right way here. The rate model,
   added in the second round, pointed the wrong way: it swapped Dyson Daniels (44.2) and Jalen Suggs
   (33.5) for Ausar Thompson, Kyshawn George and Jonathan Kuminga. A single night's difference has a
-  standard deviation of about 7 points, so this says little against the 169-night holdout (+0.55).
+  standard deviation of about 7 points, so this says little against the 169-night holdout (+0.51).
 - `python3 scripts/fit_nba_minutes.py --holdout` reproduces the two shipped rows above from scratch.
 - **Expect about +3.7, not +4.1.** Five other random seeds of the same main model score +3.64 to +3.73
   (69.9–70.0% of optimal), so the shipped fit's +4.12 is a lucky draw of about 0.4. Averaging five seeds
@@ -172,19 +172,27 @@ scores all 169 nights of 2025-26 and 2026-27:
 | Column | % of optimal | vs minutes model |
 |---|---:|---:|
 | Minutes model | 70.38% | |
-| Minutes model × rate model | 70.93% | +0.55 [−0.30, +1.38] |
+| Minutes model × rate model | 70.89% | +0.51 [−0.32, +1.37] |
 | Last call | 71.14% | +0.76 [−0.23, +1.80] |
-| Last call × rate model | 71.87% | +1.49 [+0.37, +2.63] |
+| Last call × rate model | 71.84% | +1.46 [+0.34, +2.60] |
 
 - **Every comparison points the same way.** The model also scales a player's points per minute by at
-  most ±16%, so it ships. But on its own it is not significant over the shipped minutes model: +0.55
-  on the main tier and +0.73 [−0.11, +1.56] on last call.
+  most ±16%, so it ships. But on its own it is not significant over the shipped minutes model: +0.51
+  on the main tier and +0.70 on last call.
 - **Its larger +1.76 was measured against a typical-seed minutes model.** The shipped fit is the lucky one.
 - **The port reproduces the experiment exactly:** all 60 feature columns on 63,354 rows, and the same
   lineup on all 101 test nights.
 - **It also fixed a look-ahead in the experiment.** Whether a player appears in his team's season table
   told the model whether he plays for the team later. It affected 130 rows, none of which played, and
   changes no test lineup.
+- **A review of the port found and fixed two more issues.**
+  - At last call, value and role cuts were dropped from tonight's pool, so the models counted players
+    who still play as absent teammates. Now only players who are out leave the pool, as in the run.
+  - The recency features saw more history in training than live. They now use this season and last
+    only. Retrained: +0.51 instead of +0.55, the same within noise.
+- **Known limit:** the models read tonight's pool as the active roster. DK files carry no injury flag, so
+  an injured regular whom research misses still counts as present, and his teammates' minutes and rates
+  come out low.
 - **Live:** `dfs/projections/nba_rate.py`, `data/learned/nba_rate_*`. If its files are missing or it
   fails, the minutes model's numbers stand and the run log says so.
 
@@ -284,7 +292,7 @@ are as above.
 5. **College play-by-play gap fill.**
 6. **The harness itself** (`dfs/oracle.py`, `scripts/oracle/`), so every future change is scored the
    same way. Experiment scripts are kept in `scripts/oracle/exp_*.py`.
-7. **NBA per-minute rate model** (`dfs/projections/nba_rate.py`): +0.55 on the main tier and +0.73 at
+7. **NBA per-minute rate model** (`dfs/projections/nba_rate.py`): +0.51 on the main tier and +0.70 at
    last call, not significant on its own (second round, above).
 8. **Several entries get a diverse portfolio** under the points objective: the best of 10 averages
    77.4% of the optimum, against 70.6% for one entry (second round, above).

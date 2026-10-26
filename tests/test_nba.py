@@ -335,6 +335,23 @@ def test_rate_features_never_see_later_games():
     assert a["lr_3"].notna().all() and a["own_dk_share"].notna().all() and a["wowy_max"].notna().all()
 
 
+def test_rate_features_do_not_depend_on_how_many_seasons_are_loaded():
+    """Training loads more past seasons than a live run: only this season and last may count."""
+    from dfs.projections import nba_rate as nr
+    box, ids = _box()
+    old = nba.normalize(pd.DataFrame([_row(ids[n], n, "NY", "XXX", f"2024-02-{g + 1:02d}T00:00:00Z", 2024, 10, 2, gid=7000 + g)
+                                      for n in ROSTER["NYK"] for g in range(20)]))
+    names = ROSTER["NYK"] + ROSTER["BOS"][:6]
+    slate = pd.DataFrame({"slate": "live", "season": 2027, "athlete_id": [ids[n] for n in names],
+                          "team": ["NY"] * 8 + ["BOS"] * 6, "opp": ["BOS"] * 8 + ["NY"] * 6, "pos": "PG,SG",
+                          "minutes": 28.0, "rate": 1.0, "rest_days": 2.0, "home": 1.0, "b2b": 0.0, "n_cur": 1.0,
+                          "n_prev": 30.0, "moved": 0.0, "vacated_min": 0.0})
+    cut = {"live": pd.Timestamp(TIP)}
+    a = nr.build_rate_features(slate, box, cutoffs=cut)
+    b = nr.build_rate_features(slate, pd.concat([old, box], ignore_index=True), cutoffs=cut)
+    pd.testing.assert_frame_equal(a[nr.FEATS], b[nr.FEATS])
+
+
 def test_minutes_features_never_see_later_games():
     """A player in uniform with no minutes yet gets the same features whether or not he plays after tonight."""
     from dfs.projections import nba_minutes as nm

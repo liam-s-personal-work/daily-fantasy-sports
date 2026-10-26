@@ -406,7 +406,7 @@ These projections were committed before kickoff, so they can be graded honestly 
 
 - **Exact optimum:** 0 nights, for every method, even with each player's exact minutes known.
 - **Second round, aimed at 85%:**
-  - a per-minute rate model adds +0.55 (+0.73 at last call), not significant;
+  - a per-minute rate model adds +0.51 (+0.70 at last call), not significant;
   - more data and new minutes features, and rules learned from real optimal lineups, didn't help;
   - several diverse entries do help: the best of 10 averages 77.4%, and the best of about 128 averages
     82.0%;

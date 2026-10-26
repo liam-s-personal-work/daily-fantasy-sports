@@ -134,8 +134,10 @@ async def lastcall_async(run_dir: Path, *, threshold: float = 0.01, web: bool = 
             starters = agents.parse_starters(await runner.run_all(agents.starters_tasks(c, open_games, now)), c, now)
             if starters:
                 from dfs.projections.nba_provider import lastcall_projections
-                excluded = (set(st["report"].get("decision", {}).get("excluded") or []) | out
-                            | agents.ruled_out_keys(c, st["dossiers"]))
+                # only players who are out leave tonight's pool, as in the run: a value or role cut still plays,
+                # and the models read the pool as the active roster (his teammates' minutes and rate). Cuts stay
+                # out of the lineup through run_excl below.
+                excluded = out | agents.ruled_out_keys(c, st["dossiers"])
                 try:
                     newp, _ = lastcall_projections(c, st["dossiers"], excluded, starters, now, season=cfg.get("season"))
                     for k, v in newp.items():

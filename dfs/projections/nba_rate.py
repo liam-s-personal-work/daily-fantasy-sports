@@ -142,10 +142,13 @@ def _team_ctx(tv, pool: set, cutoff: int) -> dict:
 def _row_feats(a, t, o, pos, season, cutoff, ow, c, tgd, ogd, lg_g, lg_tot) -> dict:
     q = _group(pos)
     f = {"grp": {"G": 0, "F": 1, "C": 2}[q]}
-    # recency-weighted rates over the last 82 games played, this season's role and minute splits, production rates
+    # recency-weighted rates over the last 82 games played, this season's role and minute splits, production rates.
+    # Only this season and last count: a live run loads two seasons back and training loads more, so older games
+    # would make the same night's features depend on how much history was loaded.
     n = int(np.searchsorted(ow[0], cutoff, "left")) if ow is not None else 0
-    if n:
-        _, mn, dk, se, sr, pts, reb, ast, tov = (x[:n] for x in ow)
+    keep = ow[3][:n] >= season - 1 if n else np.zeros(0, bool)
+    if keep.any():
+        _, mn, dk, se, sr, pts, reb, ast, tov = (x[:n][keep] for x in ow)
         mn82, dk82, se82, sr82 = mn[-82:], dk[-82:], se[-82:], sr[-82:]
         age = np.arange(len(mn82))[::-1]
         for h in HL:

@@ -87,8 +87,10 @@ def rows_for(run_dir: str | Path, lineups: list[dict] | None = None) -> list[lis
             elif pr.get("notes") and pr.get("source") != "baseline":
                 parts.append(_clean(pr["notes"].split(" | ")[0]))
             comp = pr.get("components") or {}
-            if "minutes" in comp and "rate" in comp:  # NBA baseline: minutes x points per minute
-                parts.append(f"Projected {comp['minutes']:.0f} minutes at {comp['rate']:.2f} DK points per minute.")
+            if "minutes" in comp and "rate" in comp:  # NBA: minutes x points per minute (the learned models' if applied)
+                mins = comp.get("minutes_model", comp["minutes"])
+                rate = comp["rate"] * comp.get("rate_model", 1.0)
+                parts.append(f"Projected {mins:.0f} minutes at {rate:.2f} DK points per minute.")
             use = _usage(k, base.get("usage") or {}, game)
             if use and not f:
                 parts.append(f"Usage: {use}")
