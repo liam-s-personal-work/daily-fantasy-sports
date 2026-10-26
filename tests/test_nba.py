@@ -214,3 +214,52 @@ def test_a_healthy_scratch_is_not_lifted_by_a_probable_listing(tmp_path):
     d = _dossier(c, hart, ("probable", "medium", "2026-10-23T21:00:00Z", "Two-way player listed as probable"))
     out, _ = agents.apply_status(c, d, ctx.baseline)
     assert out[hart].p_zero == p.p_zero_benched  # available is not the same as in the rotation
+
+
+class _StubModel:
+    """Stands in for the learned boosters: every player plays with P=0.9 for 30 minutes."""
+
+    def predict(self, feats):
+        return np.full(len(feats), 0.9), np.full(len(feats), 30.0)
+
+
+def test_minutes_model_applies_after_research_and_statuses_still_count(tmp_path, monkeypatch):
+    from dfs.projections import nba_minutes as nm
+    monkeypatch.setattr(nm.MinutesModel, "load", classmethod(lambda cls, folder=None, tier="main": _StubModel()))
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_box()[0])
+    ctx = prov.prepare(c, now=TIP)
+    hart = next(k for k, p in c.players.items() if p.name == "Josh Hart")  # missing from the last box score
+    brunson = next(k for k, p in c.players.items() if p.name == "Jalen Brunson")
+    white = next(k for k, p in c.players.items() if p.name == "Derrick White")
+    d = _dossier(c, white, ("questionable", "high", "2026-10-23T21:00:00Z", "White questionable"))
+    statused, _ = agents.apply_status(c, d, ctx.baseline)
+    out, notes = prov.after_research(c, statused)
+    assert any("minutes model applied" in n for n in notes)
+    rate = ctx.baseline[brunson].components["rate"]
+    assert out[brunson].mean == pytest.approx(0.9 * 30.0 * rate, abs=0.01)  # no news: the model's numbers
+    assert out[white].p_zero == pytest.approx(1 - 0.9 * 0.7, abs=1e-3)  # questionable keeps its 30% on top
+    assert out[hart].p_zero == pytest.approx(1 - 0.9 * 0.4, abs=1e-3)  # absent last game, no news: 60% stays
+    assert out[brunson].components["minutes_model"] == 30.0
+
+
+def test_without_saved_model_files_the_baseline_stands(tmp_path):
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_box()[0], minutes_dir=tmp_path / "no_model_here")
+    ctx = prov.prepare(c, now=TIP)
+    out, notes = prov.after_research(c, ctx.baseline)
+    assert not any("minutes model applied" in n for n in notes)
+    assert all("minutes_model" not in pr.components for pr in out.values())
+
+
+def test_shipped_minutes_model_loads_and_predicts_on_live_features(tmp_path):
+    from dfs.projections import nba_minutes as nm
+    m = nm.MinutesModel.load()
+    if m is None:
+        pytest.skip("no trained minutes model in data/learned (scripts/fit_nba_minutes.py)")
+    c = _contest(tmp_path)
+    prov = NBAProvider(box=_box()[0])
+    ctx = prov.prepare(c, now=TIP)
+    out, notes = prov.after_research(c, ctx.baseline)
+    vals = [pr.components.get("minutes_model") for pr in out.values()]
+    assert any("minutes model applied" in n for n in notes) and all(v is not None and 0 <= v <= 48 for v in vals)

@@ -1,0 +1,325 @@
+{
+ "table": "draftkings.cfb",
+ "files": [
+  "DKEntries_CFB_2026-10-23.csv",
+  "DKEntries_CFB_2026-10-24.csv"
+ ],
+ "positions": {
+  "QB": {
+   "k": 1.0,
+   "spec": "ppg+l3+starter",
+   "extra": [
+    "l3",
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    4878.5385,
+    37.0101,
+    -26.4821,
+    -849.2331,
+    148.4932
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    4500,
+    9700
+   ]
+  },
+  "RB": {
+   "k": 1.0,
+   "spec": "ppg+l3+starter",
+   "extra": [
+    "l3",
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    2739.6552,
+    222.962,
+    -15.5867,
+    1146.2227,
+    -13.8046
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "l3",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    4000,
+    9700
+   ]
+  },
+  "WR": {
+   "k": 0.5,
+   "spec": "ppg+starter",
+   "extra": [
+    "starter",
+    "starter_x_blend"
+   ],
+   "coef": [
+    2495.4308,
+    157.0063,
+    55.9114,
+    61.0554
+   ],
+   "coef_names": [
+    "const",
+    "blend",
+    "starter",
+    "starter_x_blend"
+   ],
+   "range": [
+    3000,
+    9300
+   ]
+  }
+ },
+ "no_history": {
+  "QB": 4500.0,
+  "RB": 4000.0,
+  "WR": 3000.0
+ },
+ "ranges": {
+  "QB": [
+   4500,
+   9700
+  ],
+  "RB": [
+   4000,
+   9700
+  ],
+  "WR": [
+   3000,
+   9300
+  ]
+ },
+ "fit": {
+  "QB": {
+   "spec": "ppg+l3+starter",
+   "k": 1.0,
+   "in_sample": {
+    "r2": 0.302,
+    "mae": 844.7,
+    "n": 114
+   },
+   "above_floor": {
+    "r2": -0.5355,
+    "mae": 1100.0,
+    "n": 69
+   },
+   "leave_one_game_out": {
+    "r2": 0.2782,
+    "mae": 865.8,
+    "n": 114
+   },
+   "leave_one_game_out_above_floor": {
+    "r2": -0.5759,
+    "mae": 1121.7,
+    "n": 69
+   },
+   "pool_like_in_sample": {
+    "r2": 0.6478,
+    "mae": 535.3,
+    "n": 34
+   },
+   "pool_like_leave_one_game_out": {
+    "r2": 0.6274,
+    "mae": 567.6,
+    "n": 34
+   },
+   "spec_grid_top": {
+    "ppg+l3+starter": 865.8,
+    "ppg+starter": 866.7,
+    "ppg+starter+implied": 878.1,
+    "ppg+l3+starter+implied": 884.2,
+    "ppg": 934.2,
+    "ppg+l3": 950.0
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv": {
+    "r2": 0.3397,
+    "mae": 835.3,
+    "n": 34
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv_pool_like": {
+    "r2": 0.7323,
+    "mae": 530.0,
+    "n": 10
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv": {
+    "r2": 0.2049,
+    "mae": 961.2,
+    "n": 80
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv_pool_like": {
+    "r2": 0.2238,
+    "mae": 870.8,
+    "n": 24
+   }
+  },
+  "RB": {
+   "spec": "ppg+l3+starter",
+   "k": 1.0,
+   "in_sample": {
+    "r2": 0.8301,
+    "mae": 255.3,
+    "n": 219
+   },
+   "above_floor": {
+    "r2": 0.8215,
+    "mae": 415.2,
+    "n": 92
+   },
+   "leave_one_game_out": {
+    "r2": 0.8118,
+    "mae": 269.9,
+    "n": 219
+   },
+   "leave_one_game_out_above_floor": {
+    "r2": 0.8013,
+    "mae": 442.4,
+    "n": 92
+   },
+   "pool_like_in_sample": {
+    "r2": 0.8152,
+    "mae": 432.9,
+    "n": 70
+   },
+   "pool_like_leave_one_game_out": {
+    "r2": 0.7976,
+    "mae": 457.1,
+    "n": 70
+   },
+   "spec_grid_top": {
+    "ppg+l3+starter": 269.9,
+    "ppg+starter": 270.3,
+    "ppg": 316.9,
+    "ppg+l3": 318.3
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv": {
+    "r2": 0.8344,
+    "mae": 247.8,
+    "n": 69
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv_pool_like": {
+    "r2": 0.7258,
+    "mae": 550.0,
+    "n": 22
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv": {
+    "r2": 0.7252,
+    "mae": 338.0,
+    "n": 150
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv_pool_like": {
+    "r2": 0.7319,
+    "mae": 500.0,
+    "n": 48
+   }
+  },
+  "WR": {
+   "spec": "ppg+starter",
+   "k": 0.5,
+   "in_sample": {
+    "r2": 0.7763,
+    "mae": 238.9,
+    "n": 452
+   },
+   "above_floor": {
+    "r2": 0.7693,
+    "mae": 375.8,
+    "n": 198
+   },
+   "leave_one_game_out": {
+    "r2": 0.7695,
+    "mae": 243.1,
+    "n": 452
+   },
+   "leave_one_game_out_above_floor": {
+    "r2": 0.7594,
+    "mae": 383.3,
+    "n": 198
+   },
+   "pool_like_in_sample": {
+    "r2": 0.7488,
+    "mae": 434.3,
+    "n": 134
+   },
+   "pool_like_leave_one_game_out": {
+    "r2": 0.7368,
+    "mae": 446.3,
+    "n": 134
+   },
+   "spec_grid_top": {
+    "ppg+starter": 243.1,
+    "ppg+l3+starter": 246.2,
+    "ppg+l3": 259.5,
+    "ppg": 260.6
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv": {
+    "r2": 0.5889,
+    "mae": 269.2,
+    "n": 133
+   },
+   "holdout_score_DKEntries_CFB_2026-10-23.csv_pool_like": {
+    "r2": 0.3753,
+    "mae": 594.7,
+    "n": 38
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv": {
+    "r2": 0.7543,
+    "mae": 278.7,
+    "n": 319
+   },
+   "holdout_score_DKEntries_CFB_2026-10-24.csv_pool_like": {
+    "r2": 0.7655,
+    "mae": 427.1,
+    "n": 96
+   }
+  },
+  "ALL": {
+   "r2": 0.798,
+   "mae": 331.5,
+   "n": 785
+  },
+  "ALL_pool_like": {
+   "r2": 0.8393,
+   "mae": 448.3,
+   "n": 238
+  },
+  "rows_by_file": {
+   "DKEntries_CFB_2026-10-23.csv": 374,
+   "DKEntries_CFB_2026-10-24.csv": 851
+  },
+  "matched_by_file": {
+   "DKEntries_CFB_2026-10-23.csv": 0.9947,
+   "DKEntries_CFB_2026-10-24.csv": 0.9929
+  },
+  "rows_with_history": 785,
+  "rows_without_history": 440,
+  "site_avg_vs_our_ppg": {
+   "corr": 0.9728,
+   "median_abs_diff": 0.117
+  },
+  "dk_pos_vs_espn_pos": {
+   "QB|QB": 97,
+   "QB|none": 92,
+   "RB|RB": 189,
+   "RB|WR": 8,
+   "RB|none": 84,
+   "WR|TE": 128,
+   "WR|WR": 278,
+   "WR|none": 349
+  },
+  "notes": "pool_like = rank 1 QB, 1-2 RB, 1-4 WR/TE of the team by recent usage (the oracle slates' pre-game pool). holdout_score_<file> = fit on the other file only, scored on this one. leave_one_game_out = refit without each game's players (17 games), used to pick spec and k."
+ }
+}

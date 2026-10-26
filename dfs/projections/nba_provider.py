@@ -221,17 +221,80 @@ class NBAProvider:
     name = "nba"
 
     def after_research(self, contest: Contest, baseline: dict[str, Projection]) -> tuple[dict[str, Projection], list[str]]:
-        """Called once tonight's statuses are applied: team minutes are reconciled."""
+        """Called once tonight's statuses are applied: team minutes are reconciled, then the learned minutes
+        model (``dfs.projections.nba_minutes``, if its files are in data/learned/) re-estimates each matched
+        player's chance of playing and minutes from tonight's roster. Research statuses still apply on top."""
         out, factors = reconcile_minutes(contest, baseline)
-        return out, [f"{t}: regulars' minutes x{f} (players returning from injury share the 242)"
-                     for t, f in sorted(factors.items())]
+        notes = [f"{t}: regulars' minutes x{f} (players returning from injury share the 242)" for t, f in sorted(factors.items())]
+        try:
+            out, n = self._apply_minutes_model(contest, out, baseline)
+            if n:
+                notes.append(f"minutes model applied to {n} players")
+        except Exception as e:  # the learned layer never blocks a run: the baseline stands
+            notes.append(f"minutes model not applied ({e})")
+        return out, notes
+
+    def _apply_minutes_model(self, contest: Contest, out: dict[str, Projection],
+                             statused: dict[str, Projection]) -> tuple[dict[str, Projection], int]:
+        live = getattr(self, "_live", None)
+        if live is None:
+            return out, 0
+        from dfs.projections import nba_minutes as nm
+
+        model = nm.MinutesModel.load(self.minutes_dir)
+        if model is None:
+            return out, 0
+        info, table, lastg = live["info"], live["table"], live["lastg"]
+        keys = [k for k in out if k in info]
+        if not keys:
+            return out, 0
+        active = {info[k]["athlete_id"] for k in keys}
+        vac: dict[str, float] = {}
+        for k in keys:
+            team = info[k]["team"]
+            if team not in vac:
+                tg = lastg.get(team)
+                gone = [a for a in (tg[1] if tg else set()) if a not in active and a in table.index]
+                vac[team] = float(table.loc[gone, "minutes"].sum()) if gone else 0.0
+        rows = []
+        for k in keys:
+            f = info[k]
+            rows.append({**{c: f[c] for c in ("athlete_id", "team", "opp", "pos", "rate", "last_minutes", "benched",
+                                               "absent_last", "n_cur", "n_prev", "moved", "rest_days", "b2b", "home")},
+                         "slate": "live", "season": live["season"], "key": k, "p_zero": f["p_zero_feature"],
+                         "minutes": float(out[k].components.get("minutes", f["minutes"])), "vacated_min": vac[f["team"]]})
+        feats = nm.build_features(pd.DataFrame(rows), self.box, cutoffs={"live": live["cutoff"]})
+        p_play, mins = model.predict(feats)
+        res = dict(out)
+        for (k, pp, m) in zip(feats["key"], p_play, mins):
+            f, pr = info[k], out[k]
+            orig = live["p_zero"][k]
+            # research statuses still count (the model never saw tonight's injury report): a status that moved
+            # p_zero sets the injury risk; a player missing from the last box score with no news keeps it
+            p_status = statused[k].p_zero if abs(statused[k].p_zero - orig) > 1e-9 else (
+                self.params.p_zero_missed if f["absent_last"] else 0.0)
+            if f["benched"] and p_status <= self.params.p_zero_benched:
+                p_status = 0.0  # a healthy scratch's risk is the model's (it sees he was benched)
+            play = float(pp) * (1.0 - p_status)
+            cond_new = float(m) * f["rate"]
+            cond_old = pr.mean / (1 - pr.p_zero) if pr.p_zero < 1 else cond_new
+            g = cond_new / cond_old if cond_old > 0 else 1.0
+            res[k] = pr.model_copy(update={
+                "mean": round(play * cond_new, 3), "p_zero": round(1.0 - play, 3),
+                "p10": round(pr.p10 * g, 2), "p50": round(pr.p50 * g, 2), "p90": round(pr.p90 * g, 2),
+                "components": dict(pr.components, minutes_model=round(float(m), 2), p_play_model=round(float(pp), 3),
+                                   p_status=round(p_status, 3))})
+        return res, len(keys)
 
     def __init__(self, season: int | None = None, *, box: pd.DataFrame | None = None, params: NBAParams | None = None,
-                 max_age_hours: float | None = None):
+                 max_age_hours: float | None = None, minutes_dir=None):
+        from dfs.projections.nba_minutes import LEARNED
+
         self.season = season
         self.box = box
         self.params = params or NBAParams()
         self.max_age_hours = max_age_hours
+        self.minutes_dir = minutes_dir or LEARNED  # learned minutes model (None files: baseline only)
 
     def prepare(self, contest: Contest, now: datetime | None = None) -> SlateContext:
         if contest.rules.sport != "nba":
@@ -265,6 +328,9 @@ class NBAProvider:
         base: dict[str, Projection] = {}
         out: set[str] = set()
         facts: dict[str, list[Fact]] = {}
+        hist = nbadata.before(box, cutoff)
+        team_last = hist.groupby("team_abbreviation")["start"].max()
+        info: dict[str, dict] = {}
         known_lines: dict[str, list[str]] = {}
         usage_lines: dict[str, list[str]] = {}
         for k, p in contest.players.items():
@@ -313,6 +379,17 @@ class NBAProvider:
                 known_lines.setdefault(g, []).append(text)
             elif tg is not None and aid in tg[2]:
                 known_lines.setdefault(g, []).append(f"{p.name} started {p.team}'s last game")
+            rest = ((cutoff - team_last[team]).total_seconds() / 86400) if team in team_last.index else 3.0
+            home = (p.game or "").split("@")[-1]
+            info[k] = {"athlete_id": int(aid), "team": team, "opp": nbadata.espn_team(p.opponent or ""),
+                       "pos": {"G": "PG,SG", "F": "PF,SF", "C": "C"}.get(str(r["group"]), "PF,SF"),
+                       "minutes": minutes, "rate": float(r["rate"]), "last_minutes": float(r["last_minutes"]),
+                       "benched": float(benched), "absent_last": float(missed and not benched),
+                       "n_cur": float(r["n_cur"]), "n_prev": float(r["n_prev"]), "moved": float(bool(r["moved"])),
+                       "rest_days": rest, "b2b": float(rest < 1.5), "home": float(p.team == home),
+                       # the model was trained on players known active: their own p_zero by last game only
+                       "p_zero_feature": (self.params.p_zero_benched if benched else 0.0 if missed
+                                          else p_zero_after_playing(float(r["last_minutes"]), self.params))}
             sd = max(self.params.sd_a + self.params.sd_b * mean, 1.0)
             p10, p50, p90 = quantiles_from_mean_sd(mean, sd, self.params.skew)
             base[k] = Projection(player_key=k, mean=round(mean * (1 - pz), 3), p10=round(p10, 2), p50=round(p50, 2),
@@ -328,6 +405,8 @@ class NBAProvider:
                 else f"- {k}: no games this season")
             if mins_prev is not None:
                 usage_lines[g][-1] += f"; last season {mins_prev:.1f} ({int(r['n_prev'])} g)"
+        self._live = {"cutoff": pd.Timestamp(cutoff).tz_convert("UTC"), "season": season, "table": table,
+                      "lastg": lastg, "info": info, "p_zero": {k: base[k].p_zero for k in info}}
         return SlateContext(baseline=base, ruled_out=out, structured_facts=facts,
                             known={g: "\n".join(v) for g, v in known_lines.items()},
                             usage={g: "\n".join(v) for g, v in usage_lines.items()},

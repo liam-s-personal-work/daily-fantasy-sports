@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-data = ["nflreadpy>=0.1.5", "polars>=1.0", "pyarrow>=14"]
+data = ["nflreadpy>=0.1.5", "polars>=1.0", "pyarrow>=14", "lightgbm>=4.0"]
 agents = ["claude-agent-sdk>=0.2"]
 dev = ["pytest>=8"]
 
